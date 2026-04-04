@@ -10,12 +10,32 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: "Lucida Grande", "Lucida Sans Unicode", Verdana, Helvetica, sans-serif;
+  --font-serif: Georgia, serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
 html,
 body {
   height: 100%;
   overflow: hidden;
+  font-family: "Lucida Grande", "Lucida Sans Unicode", Verdana, Helvetica, sans-serif;
+}
+
+/* Preview pane: headers use Georgia */
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4,
+.prose h5,
+.prose h6 {
+  font-family: Georgia, serif;
+}
+
+/* Mobile: fall back to device sans-serif (Verdana-like) */
+@media (max-width: 767px) {
+  html,
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Verdana, Helvetica, sans-serif;
+  }
 }
