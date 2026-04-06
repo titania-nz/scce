@@ -6,6 +6,7 @@ import Sidebar from './Sidebar';
 import PreviewPane from './PreviewPane';
 import Toolbar from './Toolbar';
 import CompareView from './CompareView';
+import DiffView from './DiffView';
 import { useFileContent } from '@/hooks/useFileContent';
 import { useAutoSave } from '@/hooks/useAutoSave';
 import { RevisionStatus } from '@/types';
@@ -23,6 +24,62 @@ const DEFAULT_REQUIRED_FIELDS = {
 };
 const PIPELINE_STORAGE_KEY = 'scce.statusPipeline';
 const REQUIRED_FIELDS_STORAGE_KEY = 'scce.requiredMetaFields';
+
+interface RevisionSummary {
+  addedChars: number;
+  removedChars: number;
+  addedHeadings: number;
+  removedHeadings: number;
+}
+
+function computeCharChanges(previousContent: string, nextContent: string): Pick<RevisionSummary, 'addedChars' | 'removedChars'> {
+  let i = 0;
+  const minLen = Math.min(previousContent.length, nextContent.length);
+  while (i < minLen && previousContent[i] === nextContent[i]) {
+    i += 1;
+  }
+
+  let j = 0;
+  while (
+    j < minLen - i &&
+    previousContent[previousContent.length - 1 - j] === nextContent[nextContent.length - 1 - j]
+  ) {
+    j += 1;
+  }
+
+  return {
+    removedChars: Math.max(0, previousContent.length - i - j),
+    addedChars: Math.max(0, nextContent.length - i - j),
+  };
+}
+
+function extractHeadings(content: string): Set<string> {
+  const matches = content.match(/^#{1,6}\s+(.+)$/gm) ?? [];
+  return new Set(matches.map((value) => value.trim().toLowerCase()));
+}
+
+function computeRevisionSummary(previous: Revision | undefined, current: Revision): RevisionSummary {
+  const previousContent = previous?.content ?? '';
+  const { addedChars, removedChars } = computeCharChanges(previousContent, current.content);
+  const previousHeadings = extractHeadings(previousContent);
+  const currentHeadings = extractHeadings(current.content);
+
+  let addedHeadings = 0;
+  let removedHeadings = 0;
+
+  currentHeadings.forEach((heading) => {
+    if (!previousHeadings.has(heading)) {
+      addedHeadings += 1;
+    }
+  });
+  previousHeadings.forEach((heading) => {
+    if (!currentHeadings.has(heading)) {
+      removedHeadings += 1;
+    }
+  });
+
+  return { addedChars, removedChars, addedHeadings, removedHeadings };
+}
 
 // Main component export: this is the entry point rendered by parent routes/components.
 export default function EditorPage() {
@@ -44,7 +101,7 @@ export default function EditorPage() {
   const [workingDraftByFile, setWorkingDraftByFile] = useState<Record<string, string>>({});
   const [lastCheckpointAtByFile, setLastCheckpointAtByFile] = useState<Record<string, string>>({});
 
-  const { content: loadedContent, revisions, isLoading, saveContent } = useFileContent(selectedFile);
+  const { content: loadedContent, revisions, isLoading, saveContent, updateRevisionInlineNotes } = useFileContent(selectedFile);
   const prevFileRef = useRef<string | null>(null);
 
   const parsedTags = useMemo(
@@ -165,6 +222,8 @@ export default function EditorPage() {
       if (!selectedFile) {
         setContent('');
         setIsDirty(false);
+        setSelectedRevisionIds([]);
+        setActiveRevisionId(null);
         return;
       }
 
@@ -178,6 +237,11 @@ export default function EditorPage() {
       }
     }
   }, [loadedContent, revisions, selectedFile, workingDraftByFile]);
+
+  useEffect(() => {
+    setSelectedRevisionIds((prev) => prev.filter((id) => revisions.some((revision) => revision.id === id)).slice(-2));
+    setActiveRevisionId((prev) => (prev && revisions.some((revision) => revision.id === prev) ? prev : null));
+  }, [revisions]);
 
   // Keep editor content in sync once async file content loads, but never clobber unsaved edits.
   useEffect(() => {
@@ -304,6 +368,80 @@ export default function EditorPage() {
   }
 
   const lastCheckpointAt = selectedFile ? lastCheckpointAtByFile[selectedFile] ?? null : null;
+  const revisionSummaries = useMemo(() => {
+    const summaries: Record<string, RevisionSummary> = {};
+    revisions.forEach((revision, idx) => {
+      summaries[revision.id] = computeRevisionSummary(revisions[idx - 1], revision);
+    });
+    return summaries;
+  }, [revisions]);
+  const selectedRevisions = useMemo(
+    () => selectedRevisionIds.map((id) => revisions.find((revision) => revision.id === id)).filter(Boolean) as Revision[],
+    [revisions, selectedRevisionIds],
+  );
+  const comparisonA = selectedRevisions[0] ?? null;
+  const comparisonB = selectedRevisions[1] ?? null;
+  const activeRevision = useMemo(
+    () => (activeRevisionId ? revisions.find((revision) => revision.id === activeRevisionId) ?? null : null),
+    [activeRevisionId, revisions],
+  );
+
+  const restoreAsDraft = useCallback((revision: Revision) => {
+    if (!selectedFile) return;
+    setContent(revision.content);
+    setRevisionNote(revision.note ?? '');
+    setStatus(revision.status ?? '');
+    setTagsInput((revision.tags ?? []).join(', '));
+    setWorkingDraftByFile((prev) => ({ ...prev, [selectedFile]: revision.content }));
+    setIsDirty(true);
+  }, [selectedFile]);
+
+  const restoreAsCheckpoint = useCallback(async (revision: Revision) => {
+    if (!selectedFile) return;
+    const restoredAt = new Date().toLocaleString();
+    await saveContent(revision.content, {
+      note: `Restored checkpoint from ${new Date(revision.createdAt).toLocaleString()} at ${restoredAt}`,
+      tags: revision.tags ?? [],
+      status: revision.status,
+    });
+    setTimelineError(null);
+    setLastCheckpointAtByFile((prev) => ({
+      ...prev,
+      [selectedFile]: new Date().toISOString(),
+    }));
+    setIsDirty(false);
+  }, [saveContent, selectedFile]);
+
+  const handleAddInlineNote = useCallback(async () => {
+    if (!activeRevision || !inlineNoteMessage.trim()) return;
+    try {
+      const nextNotes: RevisionInlineNote[] = [
+        ...(activeRevision.inlineNotes ?? []),
+        {
+          id: crypto.randomUUID(),
+          message: inlineNoteMessage.trim(),
+          lineNumber: inlineNoteLine ? Number(inlineNoteLine) : null,
+          createdAt: new Date().toISOString(),
+        },
+      ];
+      await updateRevisionInlineNotes(activeRevision.id, nextNotes);
+      setInlineNoteMessage('');
+      setInlineNoteLine('');
+      setTimelineError(null);
+    } catch (error) {
+      setTimelineError(error instanceof Error ? error.message : 'Could not add inline note');
+    }
+  }, [activeRevision, inlineNoteLine, inlineNoteMessage, updateRevisionInlineNotes]);
+
+  function toggleRevisionSelection(revisionId: string) {
+    setSelectedRevisionIds((prev) => {
+      if (prev.includes(revisionId)) {
+        return prev.filter((id) => id !== revisionId);
+      }
+      return [...prev, revisionId].slice(-2);
+    });
+    setActiveRevisionId(revisionId);
+  }
 
   function applyStatusPipelineInput() {
     const next = statusPipelineInput
@@ -487,11 +625,16 @@ export default function EditorPage() {
                   [...revisions].reverse().map((revision) => (
                     <button
                       key={revision.id}
-                      className="w-full text-left p-2 rounded border border-gray-700 bg-gray-900 hover:bg-gray-800"
+                      className={`w-full text-left p-2 rounded border hover:bg-gray-800 ${
+                        selectedRevisionIds.includes(revision.id)
+                          ? 'border-blue-500 bg-blue-950/30'
+                          : 'border-gray-700 bg-gray-900'
+                      }`}
                       onClick={() => {
                         setRevisionNote(revision.note ?? '');
                         setStatus(revision.status ?? '');
                         setTagsInput((revision.tags ?? []).join(', '));
+                        toggleRevisionSelection(revision.id);
                       }}
                     >
                       <p className="text-[11px] text-gray-500">
@@ -512,14 +655,110 @@ export default function EditorPage() {
                           </span>
                         ))}
                       </div>
+                      <p className="mt-1 text-[10px] text-gray-400">
+                        +{revisionSummaries[revision.id]?.addedChars ?? 0} / -{revisionSummaries[revision.id]?.removedChars ?? 0} chars
+                        {' · '}
+                        H+{revisionSummaries[revision.id]?.addedHeadings ?? 0} / H-{revisionSummaries[revision.id]?.removedHeadings ?? 0}
+                      </p>
                     </button>
                   ))
+                )}
+
+                <p className="text-[11px] text-gray-500 pt-1">
+                  Select exactly two revisions to inspect a side-by-side diff.
+                </p>
+
+                {activeRevision && (
+                  <div className="mt-2 p-2 rounded border border-gray-700 bg-gray-900/60 space-y-2">
+                    <h4 className="text-[11px] uppercase tracking-wide text-gray-400 font-semibold">
+                      Inline notes ({activeRevision.inlineNotes?.length ?? 0})
+                    </h4>
+
+                    {(activeRevision.inlineNotes ?? []).length === 0 ? (
+                      <p className="text-[11px] text-gray-500">No inline notes for this revision.</p>
+                    ) : (
+                      <div className="space-y-1">
+                        {(activeRevision.inlineNotes ?? []).map((note) => (
+                          <div key={note.id} className="text-[11px] rounded bg-gray-800 px-2 py-1 text-gray-300">
+                            <p className="text-gray-200">{note.message}</p>
+                            <p className="text-gray-500">
+                              {note.lineNumber ? `Line ${note.lineNumber}` : 'General'} · {new Date(note.createdAt).toLocaleString()}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <label className="block text-[11px] text-gray-300">
+                      Line number (optional)
+                      <input
+                        className="mt-1 w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs text-gray-100"
+                        value={inlineNoteLine}
+                        onChange={(e) => setInlineNoteLine(e.target.value.replace(/[^\d]/g, ''))}
+                        placeholder="e.g. 18"
+                      />
+                    </label>
+
+                    <label className="block text-[11px] text-gray-300">
+                      Note
+                      <textarea
+                        className="mt-1 w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs text-gray-100 resize-y min-h-16"
+                        value={inlineNoteMessage}
+                        onChange={(e) => setInlineNoteMessage(e.target.value)}
+                        placeholder="Comment tied to this revision..."
+                      />
+                    </label>
+
+                    <button
+                      className="w-full text-xs rounded bg-gray-700 hover:bg-gray-600 px-2 py-1 text-gray-100 disabled:opacity-40"
+                      disabled={!inlineNoteMessage.trim()}
+                      onClick={handleAddInlineNote}
+                    >
+                      Add inline note
+                    </button>
+
+                    {timelineError && <p className="text-[11px] text-red-400">{timelineError}</p>}
+                  </div>
                 )}
               </div>
             </aside>
           </div>
         )}
       </div>
+
+      {comparisonA && comparisonB && (
+        <div className="fixed inset-6 z-40 bg-gray-950 border border-gray-700 rounded-lg shadow-2xl overflow-hidden flex flex-col">
+          <div className="px-3 h-12 shrink-0 border-b border-gray-700 bg-gray-900 flex items-center gap-2">
+            <h3 className="text-sm font-semibold text-gray-200 flex-1">Revision diff</h3>
+            <button
+              className="px-2 py-1 text-xs rounded bg-gray-700 hover:bg-gray-600 text-gray-100"
+              onClick={() => restoreAsDraft(comparisonB)}
+            >
+              Restore this revision as draft
+            </button>
+            <button
+              className="px-2 py-1 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white"
+              onClick={() => restoreAsCheckpoint(comparisonB)}
+            >
+              Restore as new checkpoint
+            </button>
+            <button
+              className="px-2 py-1 text-xs rounded border border-gray-600 text-gray-300 hover:bg-gray-800"
+              onClick={() => setSelectedRevisionIds([])}
+            >
+              Close
+            </button>
+          </div>
+          <div className="flex-1 min-h-0">
+            <DiffView
+              contentA={comparisonA.content}
+              contentB={comparisonB.content}
+              filenameA={`A · ${new Date(comparisonA.createdAt).toLocaleString()}`}
+              filenameB={`B · ${new Date(comparisonB.createdAt).toLocaleString()}`}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
