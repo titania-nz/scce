@@ -226,7 +226,7 @@ export default function Sidebar({
   onFileDeleted,
   onFileRenamed,
 }: SidebarProps) {
-  const { files, isLoading, createFile, deleteFile, renameFile } = useFiles();
+  const { files, isLoading, createFile, deleteFile, deleteFiles, renameFile } = useFiles();
   const [newFileName, setNewFileName] = useState('');
   const [showNewInput, setShowNewInput] = useState(false);
   const [clipboardContent, setClipboardContent] = useState<string | null>(null);
@@ -240,6 +240,8 @@ export default function Sidebar({
   const [collapsedDocuments, setCollapsedDocuments] = useState<Record<string, boolean>>({});
   const [collapsedChapters, setCollapsedChapters] = useState<Record<string, boolean>>({});
   const [revisionMetaByFile, setRevisionMetaByFile] = useState<Record<string, RevisionMeta>>({});
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -452,6 +454,38 @@ export default function Sidebar({
     }
   }
 
+  function toggleFileSelection(filename: string) {
+    setSelectedFiles((prev) => {
+      const next = new Set(prev);
+      if (next.has(filename)) {
+        next.delete(filename);
+      } else {
+        next.add(filename);
+      }
+      return next;
+    });
+  }
+
+  function exitSelectionMode() {
+    setSelectionMode(false);
+    setSelectedFiles(new Set());
+  }
+
+  async function handleBulkDelete() {
+    if (selectedFiles.size === 0) return;
+    if (!confirm(`Delete ${selectedFiles.size} file(s)?`)) return;
+    setError(null);
+    try {
+      const toDelete = Array.from(selectedFiles);
+      await deleteFiles(toDelete);
+      toDelete.forEach((filename) => onFileDeleted(filename));
+      exitSelectionMode();
+    } catch (err: unknown) {
+      const e = err as { message?: string };
+      setError(e.message ?? 'Could not delete files');
+    }
+  }
+
   function startRename(file: FileEntry) {
     setRenamingFile(file.name);
     setRenameValue(file.name.replace(/\.md$/, ''));
@@ -492,6 +526,22 @@ export default function Sidebar({
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
         <span className="text-sm font-semibold text-gray-300 uppercase tracking-wider">Files</span>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              if (selectionMode) {
+                exitSelectionMode();
+              } else {
+                setSelectionMode(true);
+              }
+            }}
+            className={`transition-colors ${selectionMode ? 'text-blue-400 hover:text-blue-300' : 'text-gray-400 hover:text-white'}`}
+            title={selectionMode ? 'Cancel selection' : 'Select files'}
+            aria-label={selectionMode ? 'Cancel selection' : 'Select files'}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+            </svg>
+          </button>
           <button
             onClick={handlePasteFromClipboard}
             className="text-gray-400 hover:text-white transition-colors"
@@ -654,14 +704,25 @@ export default function Sidebar({
                           const isDraft = status.includes('draft') || revision.file.name.toLowerCase().includes('draft');
                           const isCurrent = status.includes('current') || revision.file.name === latestRevision;
 
+                          const isChecked = selectedFiles.has(revision.file.name);
+
                           return (
                             <div
                               key={revision.file.name}
                               className={`group border-l-2 px-5 py-2 cursor-pointer hover:bg-gray-800/70 transition-colors ${
-                                selectedFile === revision.file.name
+                                selectionMode && isChecked
+                                  ? 'bg-gray-800/50 border-blue-500'
+                                  : !selectionMode && selectedFile === revision.file.name
                                   ? 'bg-gray-800 border-blue-500'
                                   : 'border-transparent'
                               }`}
+                              onClick={() => {
+                                if (selectionMode) {
+                                  toggleFileSelection(revision.file.name);
+                                } else {
+                                  onFileSelect(revision.file.name);
+                                }
+                              }}
                             >
                               {renamingFile === revision.file.name ? (
                                 <input
@@ -678,7 +739,17 @@ export default function Sidebar({
                                 />
                               ) : (
                                 <>
-                                  <div className="flex items-center gap-2" onClick={() => onFileSelect(revision.file.name)}>
+                                  <div className="flex items-center gap-2">
+                                    {selectionMode && (
+                                      <input
+                                        type="checkbox"
+                                        checked={isChecked}
+                                        onChange={() => toggleFileSelection(revision.file.name)}
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="shrink-0 accent-blue-500"
+                                        aria-label={`Select ${revision.file.name}`}
+                                      />
+                                    )}
                                     <span className="text-sm truncate">{revision.revisionLabel}</span>
                                     {isDraft && (
                                       <span className="text-[10px] font-semibold uppercase bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded">
@@ -690,37 +761,39 @@ export default function Sidebar({
                                         Current
                                       </span>
                                     )}
-                                    <div className="ml-auto flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          startRename(revision.file);
-                                        }}
-                                        className="text-gray-400 hover:text-white p-0.5"
-                                        title="Rename"
-                                        aria-label={`Rename ${revision.file.name}`}
-                                      >
-                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                                        </svg>
-                                      </button>
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleDelete(revision.file);
-                                        }}
-                                        className="text-gray-400 hover:text-red-400 p-0.5"
-                                        title="Delete"
-                                        aria-label={`Delete ${revision.file.name}`}
-                                      >
-                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                        </svg>
-                                      </button>
-                                    </div>
+                                    {!selectionMode && (
+                                      <div className="ml-auto flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            startRename(revision.file);
+                                          }}
+                                          className="text-gray-400 hover:text-white p-0.5"
+                                          title="Rename"
+                                          aria-label={`Rename ${revision.file.name}`}
+                                        >
+                                          <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                          </svg>
+                                        </button>
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleDelete(revision.file);
+                                          }}
+                                          className="text-gray-400 hover:text-red-400 p-0.5"
+                                          title="Delete"
+                                          aria-label={`Delete ${revision.file.name}`}
+                                        >
+                                          <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                          </svg>
+                                        </button>
+                                      </div>
+                                    )}
                                   </div>
 
-                                  <div className="mt-1 text-[11px] text-gray-400 space-y-0.5" onClick={() => onFileSelect(revision.file.name)}>
+                                  <div className="mt-1 text-[11px] text-gray-400 space-y-0.5">
                                     <div className="flex gap-2">
                                       <span>Created: {formatDate(revision.file.ctime ?? revision.file.mtime)}</span>
                                       <span>Size: {formatSize(revision.file.size)}</span>
@@ -744,6 +817,27 @@ export default function Sidebar({
           );
         })}
       </div>
+
+      {selectionMode && (
+        <div className="border-t border-gray-700 px-3 py-2 flex items-center gap-2 bg-gray-900">
+          <span className="text-xs text-gray-400 flex-1">
+            {selectedFiles.size} selected
+          </span>
+          <button
+            onClick={handleBulkDelete}
+            disabled={selectedFiles.size === 0}
+            className="text-xs px-2 py-1 bg-red-700 hover:bg-red-600 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed rounded transition-colors"
+          >
+            Delete
+          </button>
+          <button
+            onClick={exitSelectionMode}
+            className="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
     </aside>
   );
 }
