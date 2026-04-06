@@ -18,6 +18,10 @@ const DEFAULT_WINDOW_SECONDS = 5 * 60;
 const DEFAULT_MAX_ATTEMPTS = 8;
 const MEMORY_BUCKETS = new Map<string, ThrottleBucket>();
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
 function nowMs(): number {
   return Date.now();
 }
@@ -68,11 +72,13 @@ async function readStoreBucket(key: string): Promise<ThrottleBucket | null> {
   if (!data || typeof data !== 'object') return null;
 
   const parsed = data as Partial<ThrottleBucket>;
-  if (!Number.isFinite(parsed.count) || !Number.isFinite(parsed.resetAt)) return null;
+  const count = parsed.count;
+  const resetAt = parsed.resetAt;
+  if (!isFiniteNumber(count) || !isFiniteNumber(resetAt)) return null;
 
   return {
-    count: parsed.count,
-    resetAt: parsed.resetAt,
+    count,
+    resetAt,
   };
 }
 
