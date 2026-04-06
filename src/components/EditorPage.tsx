@@ -9,9 +9,9 @@ import CompareView from './CompareView';
 import DiffView from './DiffView';
 import { useFileContent } from '@/hooks/useFileContent';
 import { useAutoSave } from '@/hooks/useAutoSave';
-import { RevisionStatus, Revision, RevisionInlineNote } from '@/types';
 import { useFiles } from '@/hooks/useFiles';
-import { buildFileApiPath } from '@/lib/fileApiPath';
+import { buildFileExportApiPath, buildFilePublishApiPath, buildFileApiPath } from '@/lib/fileApiPath';
+import { PublishHistoryEntry, PublishTargetProfile, RevisionStatus, Revision, RevisionInlineNote } from '@/types';
 
 // CodeMirror accesses browser APIs — must be dynamically imported with ssr:false
 const EditorPane = dynamic(() => import('./EditorPane'), { ssr: false });
@@ -101,12 +101,19 @@ export default function EditorPage() {
   const { files } = useFiles();
   const [workingDraftByFile, setWorkingDraftByFile] = useState<Record<string, string>>({});
   const [lastCheckpointAtByFile, setLastCheckpointAtByFile] = useState<Record<string, string>>({});
-  const [jumpToHeadingToken, setJumpToHeadingToken] = useState('');
-  const [selectedRevisionIds, setSelectedRevisionIds] = useState<string[]>([]);
+  const [publishProfiles, setPublishProfiles] = useState<PublishTargetProfile[]>([]);
+  const [publishProfileId, setPublishProfileId] = useState('docs-site');
+  const [publishHistory, setPublishHistory] = useState<PublishHistoryEntry[]>([]);
+  const [latestRevisionStatus, setLatestRevisionStatus] = useState<RevisionStatus | ''>('');
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [publishMessage, setPublishMessage] = useState<string>('');
   const [activeRevisionId, setActiveRevisionId] = useState<string | null>(null);
-  const [inlineNoteMessage, setInlineNoteMessage] = useState('');
-  const [inlineNoteLine, setInlineNoteLine] = useState('');
+  const [selectedRevisionIds, setSelectedRevisionIds] = useState<string[]>([]);
   const [timelineError, setTimelineError] = useState<string | null>(null);
+  const [inlineNoteMessage, setInlineNoteMessage] = useState('');
+  const [inlineNoteLine, setInlineNoteLine] = useState<string>('');
+  const [jumpToHeadingToken, setJumpToHeadingToken] = useState<string>('');
+  const [fileFilter, setFileFilter] = useState({ chapterSearch: '', metaSearch: '', dateFrom: '', dateTo: '' });
 
   const { content: loadedContent, revisions, isLoading, saveContent, updateRevisionInlineNotes } = useFileContent(selectedFile);
   const prevFileRef = useRef<string | null>(null);
@@ -261,6 +268,37 @@ export default function EditorPage() {
     setContent(loadedContent);
   }, [isDirty, loadedContent, selectedFile, workingDraftByFile]);
 
+  useEffect(() => {
+    async function loadPublishMetadata() {
+      if (!selectedFile) {
+        setPublishProfiles([]);
+        setPublishHistory([]);
+        setPublishMessage('');
+        setLatestRevisionStatus('');
+        return;
+      }
+      try {
+        const res = await fetch(buildFilePublishApiPath(selectedFile));
+        const payload = await res.json() as {
+          profiles?: PublishTargetProfile[];
+          history?: PublishHistoryEntry[];
+          latestRevisionStatus?: RevisionStatus;
+        };
+        if (!res.ok) {
+          throw new Error(payload && 'error' in payload ? String((payload as { error?: string }).error) : 'Could not load publish profiles');
+        }
+        setPublishProfiles(payload.profiles ?? []);
+        setPublishHistory(payload.history ?? []);
+        setLatestRevisionStatus(payload.latestRevisionStatus ?? '');
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Could not load publish profiles';
+        setPublishMessage(message);
+      }
+    }
+
+    loadPublishMetadata();
+  }, [selectedFile, revisions]);
+
   const { isSaving, saveNow } = useAutoSave({
     content,
     filename: selectedFile,
@@ -336,7 +374,10 @@ export default function EditorPage() {
       setRevisionNote('');
       setTagsInput('');
       setStatus('');
-      setCheckpointWarning(null);
+      setPublishHistory([]);
+      setPublishProfiles([]);
+      setPublishMessage('');
+      setLatestRevisionStatus('');
     }
 
     setWorkingDraftByFile((prev) => {
@@ -474,6 +515,78 @@ export default function EditorPage() {
     }
   }, [compareHasUnsavedChanges, compareMode]);
 
+  async function handleExport(format: 'html' | 'pdf' | 'docx') {
+    if (!selectedFile) return;
+    setPublishMessage('');
+    try {
+      const endpoint = `${buildFileExportApiPath(selectedFile)}?format=${encodeURIComponent(format)}`;
+      const res = await fetch(endpoint);
+      if (!res.ok) {
+        const payload = await res.json();
+        throw new Error(payload.error ?? 'Could not export file');
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = selectedFile.replace(/\.md$/i, `.${format}`);
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Could not export file';
+      setPublishMessage(message);
+    }
+  }
+
+  async function handlePublish() {
+    if (!selectedFile || !publishProfileId) return;
+    setIsPublishing(true);
+    setPublishMessage('');
+    try {
+      const res = await fetch(buildFilePublishApiPath(selectedFile), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profileId: publishProfileId }),
+      });
+      const payload = await res.json() as { error?: string; history?: PublishHistoryEntry[]; published?: PublishHistoryEntry };
+      if (!res.ok) {
+        throw new Error(payload.error ?? 'Could not publish');
+      }
+      setPublishHistory(payload.history ?? []);
+      setPublishMessage(payload.published?.outcome ?? 'Published successfully');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Could not publish';
+      setPublishMessage(message);
+    } finally {
+      setIsPublishing(false);
+    }
+  }
+
+  async function handleRollback(entryId: string) {
+    if (!selectedFile) return;
+    setIsPublishing(true);
+    setPublishMessage('');
+    try {
+      const res = await fetch(buildFilePublishApiPath(selectedFile), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'rollback', entryId }),
+      });
+      const payload = await res.json() as { error?: string; history?: PublishHistoryEntry[] };
+      if (!res.ok) {
+        throw new Error(payload.error ?? 'Could not rollback');
+      }
+      setPublishHistory(payload.history ?? []);
+      setPublishMessage('Rollback restored the selected published revision as the active draft.');
+      setLatestRevisionStatus('needs-review');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Could not rollback';
+      setPublishMessage(message);
+    } finally {
+      setIsPublishing(false);
+    }
+  }
+
   return (
     <div className="flex h-screen overflow-hidden bg-gray-950 text-gray-100">
       {sidebarOpen && (
@@ -497,6 +610,7 @@ export default function EditorPage() {
           onFileDeleted={handleFileDeleted}
           onFileRenamed={handleFileRenamed}
           onJumpToHeading={(heading) => setJumpToHeadingToken(`${Date.now()}::${heading}`)}
+          applyFilter={setFileFilter}
         />
       </div>
 
@@ -637,6 +751,44 @@ export default function EditorPage() {
                 )}
               </div>
 
+              <div className="p-3 border-b border-gray-700 space-y-3">
+                <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Publishing pipeline</h2>
+                <div className="grid grid-cols-3 gap-1.5">
+                  <button onClick={() => handleExport('html')} className="rounded bg-gray-800 hover:bg-gray-700 px-2 py-1 text-[11px] text-gray-200">Export HTML</button>
+                  <button onClick={() => handleExport('pdf')} className="rounded bg-gray-800 hover:bg-gray-700 px-2 py-1 text-[11px] text-gray-200">Export PDF</button>
+                  <button onClick={() => handleExport('docx')} className="rounded bg-gray-800 hover:bg-gray-700 px-2 py-1 text-[11px] text-gray-200">Export DOCX</button>
+                </div>
+
+                <label className="block text-xs text-gray-300">
+                  Publish target
+                  <select
+                    className="mt-1 w-full bg-gray-800 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-100"
+                    value={publishProfileId}
+                    onChange={(e) => setPublishProfileId(e.target.value)}
+                  >
+                    {(publishProfiles.length
+                      ? publishProfiles
+                      : [{ id: 'docs-site', label: 'Docs site', description: 'Default docs site profile', type: 'docs-site' as const }]).map((profile) => (
+                      <option key={profile.id} value={profile.id}>{profile.label}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <button
+                  onClick={handlePublish}
+                  disabled={isPublishing || latestRevisionStatus !== 'accepted'}
+                  className="w-full rounded bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-700 disabled:text-gray-500 px-2 py-1.5 text-xs text-white"
+                  title={latestRevisionStatus !== 'accepted' ? 'Mark latest revision as Accepted to enable one-click publish.' : 'Publish selected target from approved status'}
+                >
+                  {isPublishing ? 'Publishing…' : 'One-click publish (approved only)'}
+                </button>
+
+                <p className="text-[11px] text-gray-400">
+                  Latest status: <span className="text-gray-200">{latestRevisionStatus || 'none'}</span>
+                </p>
+                {publishMessage && <p className="text-[11px] text-blue-300">{publishMessage}</p>}
+              </div>
+
               <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400 sticky top-0 bg-gray-900 py-1">
                   Revision timeline
@@ -687,61 +839,28 @@ export default function EditorPage() {
                   ))
                 )}
 
-                <p className="text-[11px] text-gray-500 pt-1">
-                  Select exactly two revisions to inspect a side-by-side diff.
-                </p>
-
-                {activeRevision && (
-                  <div className="mt-2 p-2 rounded border border-gray-700 bg-gray-900/60 space-y-2">
-                    <h4 className="text-[11px] uppercase tracking-wide text-gray-400 font-semibold">
-                      Inline notes ({activeRevision.inlineNotes?.length ?? 0})
-                    </h4>
-
-                    {(activeRevision.inlineNotes ?? []).length === 0 ? (
-                      <p className="text-[11px] text-gray-500">No inline notes for this revision.</p>
-                    ) : (
-                      <div className="space-y-1">
-                        {(activeRevision.inlineNotes ?? []).map((note) => (
-                          <div key={note.id} className="text-[11px] rounded bg-gray-800 px-2 py-1 text-gray-300">
-                            <p className="text-gray-200">{note.message}</p>
-                            <p className="text-gray-500">
-                              {note.lineNumber ? `Line ${note.lineNumber}` : 'General'} · {new Date(note.createdAt).toLocaleString()}
-                            </p>
-                          </div>
-                        ))}
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400 pt-3">
+                  Published history
+                </h3>
+                {publishHistory.length === 0 ? (
+                  <p className="text-xs text-gray-500">No publish runs yet.</p>
+                ) : (
+                  publishHistory.map((entry) => (
+                    <div key={entry.id} className="w-full text-left p-2 rounded border border-gray-700 bg-gray-900">
+                      <p className="text-[11px] text-gray-500">{new Date(entry.createdAt).toLocaleString()}</p>
+                      <p className="text-xs text-gray-200 mt-1">{entry.outcome}</p>
+                      <div className="mt-2 flex items-center justify-between gap-2">
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-700 text-gray-200">{entry.profileId}</span>
+                        <button
+                          onClick={() => handleRollback(entry.id)}
+                          disabled={isPublishing}
+                          className="text-[10px] px-1.5 py-0.5 rounded bg-amber-600 hover:bg-amber-500 disabled:bg-gray-700 disabled:text-gray-500 text-white"
+                        >
+                          Rollback
+                        </button>
                       </div>
-                    )}
-
-                    <label className="block text-[11px] text-gray-300">
-                      Line number (optional)
-                      <input
-                        className="mt-1 w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs text-gray-100"
-                        value={inlineNoteLine}
-                        onChange={(e) => setInlineNoteLine(e.target.value.replace(/[^\d]/g, ''))}
-                        placeholder="e.g. 18"
-                      />
-                    </label>
-
-                    <label className="block text-[11px] text-gray-300">
-                      Note
-                      <textarea
-                        className="mt-1 w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs text-gray-100 resize-y min-h-16"
-                        value={inlineNoteMessage}
-                        onChange={(e) => setInlineNoteMessage(e.target.value)}
-                        placeholder="Comment tied to this revision..."
-                      />
-                    </label>
-
-                    <button
-                      className="w-full text-xs rounded bg-gray-700 hover:bg-gray-600 px-2 py-1 text-gray-100 disabled:opacity-40"
-                      disabled={!inlineNoteMessage.trim()}
-                      onClick={handleAddInlineNote}
-                    >
-                      Add inline note
-                    </button>
-
-                    {timelineError && <p className="text-[11px] text-red-400">{timelineError}</p>}
-                  </div>
+                    </div>
+                  ))
                 )}
               </div>
             </aside>

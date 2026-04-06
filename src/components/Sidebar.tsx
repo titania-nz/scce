@@ -12,6 +12,7 @@ interface SidebarProps {
   onFileDeleted: (filename: string) => void;
   onFileRenamed: (oldName: string, newName: string) => void;
   onJumpToHeading: (heading: string) => void;
+  applyFilter: (filter: { chapterSearch: string; metaSearch: string; dateFrom: string; dateTo: string }) => void;
 }
 
 type RevisionMeta = RevisionMetaSummary;
@@ -241,6 +242,7 @@ export default function Sidebar({
   onFileDeleted,
   onFileRenamed,
   onJumpToHeading,
+  applyFilter,
 }: SidebarProps) {
   const { files, isLoading, createFile, deleteFile, deleteFiles, renameFile } = useFiles();
   const [newFileName, setNewFileName] = useState('');
@@ -266,44 +268,27 @@ export default function Sidebar({
   const [selectedHeading, setSelectedHeading] = useState('');
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
-  const [savedFilters, setSavedFilters] = useState<Array<{ id: string; name: string; chapterSearch: string; metaSearch: string; dateFrom: string; dateTo: string }>>([]);
+  const [savedFilters, setSavedFilters] = useState<Array<{ id: string; name: string; filter: any }>>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const renamingInFlightRef = useRef(false);
 
-  const getCurrentWeekRange = () => {
+  function getCurrentWeekRange() {
     const now = new Date();
     const startOfWeek = new Date(now);
-    startOfWeek.setDate(now.getDate() - now.getDay()); // Sunday
+    startOfWeek.setDate(now.getDate() - now.getDay());
+    startOfWeek.setHours(0, 0, 0, 0);
     const endOfWeek = new Date(startOfWeek);
-    endOfWeek.setDate(startOfWeek.getDate() + 6); // Saturday
-    const from = startOfWeek.toISOString().split('T')[0];
-    const to = endOfWeek.toISOString().split('T')[0];
-    return { from, to };
-  };
-
-  const applyFilter = ({ chapterSearch: cs, metaSearch: ms, dateFrom: df, dateTo: dt }: {
-    chapterSearch: string;
-    metaSearch: string;
-    dateFrom: string;
-    dateTo: string;
-  }) => {
-    setChapterSearch(cs);
-    setMetaSearch(ms);
-    setDateFrom(df);
-    setDateTo(dt);
-  };
-
-  const saveCurrentFilter = () => {
-    const newFilter = {
-      id: Date.now().toString(),
-      name: `Filter ${savedFilters.length + 1}`,
-      chapterSearch,
-      metaSearch,
-      dateFrom,
-      dateTo,
+    endOfWeek.setDate(startOfWeek.getDate() + 6);
+    endOfWeek.setHours(23, 59, 59, 999);
+    return {
+      from: startOfWeek.toISOString().split('T')[0],
+      to: endOfWeek.toISOString().split('T')[0],
     };
-    setSavedFilters((prev) => [...prev, newFilter]);
-  };
+  }
+
+  function saveCurrentFilter() {
+    // TODO: implement saving current filter
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -810,7 +795,7 @@ export default function Sidebar({
               <div key={filter.id} className="inline-flex items-center rounded border border-gray-600 overflow-hidden">
                 <button
                   type="button"
-                  onClick={() => applyFilter(filter)}
+                  onClick={() => applyFilter(filter.filter)}
                   className="text-[11px] px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-100"
                 >
                   {filter.name}
