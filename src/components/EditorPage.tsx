@@ -129,9 +129,9 @@ export default function EditorPage() {
   }, [handleSaveCheckpoint]);
 
   async function handleFileSelect(filename: string) {
-    // Persist current edits to working buffer before switching files.
+    // Persist current edits to local working-draft buffer before switching files.
+    // Do not create a backend revision on switch; checkpoint saves are explicit.
     if (selectedFile && isDirty) {
-      await saveContent(content, { note: revisionNote, tags: parsedTags, status: status || undefined }).catch(() => {});
       await saveWorkingCopy(content);
     }
     setSelectedFile(filename);
