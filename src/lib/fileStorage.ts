@@ -22,6 +22,12 @@ interface FileRevisionMeta {
   revisions: RevisionEntry[];
 }
 
+interface BlobFileMetaRecord {
+  createdAt: string;
+  updatedAt: string;
+  size: number;
+}
+
 const EMPTY_META: FileRevisionMeta = {
   currentDraftRevisionId: null,
   revisions: [],
@@ -61,6 +67,49 @@ function getRevisionMetaKey(filename: string): string {
 
 function getRevisionContentKey(filename: string, revisionId: string): string {
   return `__revisions__/${encodeFilenameForPath(filename)}/${revisionId}.md`;
+}
+
+function getBlobFileMetaKey(filename: string): string {
+  return `__filemeta__/${encodeFilenameForPath(filename)}.json`;
+}
+
+function buildBlobFileMetaRecord(existing: BlobFileMetaRecord | null, size: number): BlobFileMetaRecord {
+  const timestamp = nowIso();
+  return {
+    createdAt: existing?.createdAt ?? timestamp,
+    updatedAt: timestamp,
+    size,
+  };
+}
+
+async function readBlobFileMeta(filename: string): Promise<BlobFileMetaRecord | null> {
+  const store = getBlobStore();
+  if (!store) return null;
+  try {
+    const buffer = await store.get(getBlobFileMetaKey(filename));
+    if (!buffer) return null;
+    const parsed = JSON.parse(new TextDecoder().decode(buffer)) as Partial<BlobFileMetaRecord>;
+    if (!parsed.updatedAt && !parsed.createdAt) return null;
+    return {
+      createdAt: parsed.createdAt ?? parsed.updatedAt ?? nowIso(),
+      updatedAt: parsed.updatedAt ?? parsed.createdAt ?? nowIso(),
+      size: Number.isFinite(parsed.size) ? Number(parsed.size) : 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function writeBlobFileMeta(filename: string, meta: BlobFileMetaRecord): Promise<void> {
+  const store = getBlobStore();
+  if (!store) throw new Error('Could not write file metadata');
+  await store.set(getBlobFileMetaKey(filename), JSON.stringify(meta));
+}
+
+async function deleteBlobFileMeta(filename: string): Promise<void> {
+  const store = getBlobStore();
+  if (!store) return;
+  await store.delete(getBlobFileMetaKey(filename)).catch(() => {});
 }
 
 function ensureLocalRevisionDirs(filename: string): void {
@@ -443,24 +492,29 @@ export async function listFiles(): Promise<FileEntry[]> {
     const store = getBlobStore();
     if (!store) return [];
     const { blobs } = await store.list();
-    const files = blobs
+    const files = await Promise.all(
+      blobs
       .filter(
         (blob) =>
           blob.key.endsWith('.md') &&
           !blob.key.startsWith('__revisions__/') &&
+          !blob.key.startsWith('__filemeta__/') &&
           !blob.key.startsWith('documents/') &&
           VALID_FILENAME.test(blob.key),
       )
-      .map((blob) => ({
-        name: blob.key,
-        mtime: new Date().toISOString(),
-        ctime: new Date().toISOString(),
+      .map(async (blob) => {
+        const meta = await readBlobFileMeta(blob.key);
+        const fallback = nowIso();
+        return {
+          name: blob.key,
+          mtime: meta?.updatedAt ?? fallback,
+          ctime: meta?.createdAt ?? fallback,
+          size: meta?.size ?? 0,
+        };
+      }),
+    );
 
-        size: 0,
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-
-    return files;
+    return files.sort((a, b) => a.name.localeCompare(b.name));
   }
 
   const dir = getNotesDir();
@@ -528,6 +582,9 @@ export async function writeFile(filename: string, content: string): Promise<void
     const store = getBlobStore();
     if (!store) throw new Error('Could not create file');
     await store.set(key, content);
+    const previousMeta = await readBlobFileMeta(filename);
+    const size = Buffer.byteLength(content, 'utf-8');
+    await writeBlobFileMeta(filename, buildBlobFileMetaRecord(previousMeta, size));
   } else {
     const filePath = key;
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -597,6 +654,7 @@ export async function deleteFile(filename: string): Promise<void> {
     const existing = await store.get(key);
     if (!existing) throw Object.assign(new Error('File not found'), { status: 404 });
     await store.delete(key);
+    await deleteBlobFileMeta(filename);
     await removeRevisionData(filename);
     await removeDocumentData(filename);
     return;
@@ -623,8 +681,12 @@ export async function renameFile(oldName: string, newName: string): Promise<void
     if (newExists) throw Object.assign(new Error('File already exists'), { status: 409 });
     const content = typeof existing === 'string' ? existing : new TextDecoder().decode(existing as ArrayBuffer);
     await store.set(newKey, content);
+    const previousMeta = await readBlobFileMeta(oldName);
+    const size = Buffer.byteLength(content, 'utf-8');
+    await writeBlobFileMeta(newName, buildBlobFileMetaRecord(previousMeta, size));
     await copyRevisionData(oldName, newName);
     await store.delete(oldKey);
+    await deleteBlobFileMeta(oldName);
     await removeRevisionData(oldName);
   } else {
     const oldPath = oldKey;
