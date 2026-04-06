@@ -23,12 +23,12 @@ In the Netlify dashboard, create a new site and connect this repository. The `ne
 
 ### 2. Set environment variables
 
-In **Site Settings → Environment variables**, add the following:
+In **Site Settings > Environment variables**, add the following:
 
 | Variable | Description |
 |---|---|
 | `AUTH_PASSWORD` | The password you will type on the login screen |
-| `AUTH_SECRET` | A long random secret used to sign the auth cookie — generate one with `openssl rand -hex 32` |
+| `AUTH_SECRET` | A long random secret used to sign the auth cookie - generate one with `openssl rand -hex 32` |
 
 ### 3. Deploy
 
