@@ -6,10 +6,12 @@ import Sidebar from './Sidebar';
 import PreviewPane from './PreviewPane';
 import Toolbar from './Toolbar';
 import CompareView from './CompareView';
+import DiffView from './DiffView';
 import DocumentDashboard from './DocumentDashboard';
 import { useFileContent } from '@/hooks/useFileContent';
 import { useAutoSave } from '@/hooks/useAutoSave';
 import { useDocuments } from '@/hooks/useDocuments';
+import type { Revision, RevisionInlineNote } from '@/types';
 import { RevisionStatus } from '@/types';
 import { useFiles } from '@/hooks/useFiles';
 import { buildFileApiPath } from '@/lib/fileApiPath';
@@ -99,12 +101,17 @@ export default function EditorPage() {
   const [requiredFields, setRequiredFields] = useState(DEFAULT_REQUIRED_FIELDS);
   const [checkpointWarning, setCheckpointWarning] = useState<string | null>(null);
   const [knownTags, setKnownTags] = useState<string[]>([]);
+  const [selectedRevisionIds, setSelectedRevisionIds] = useState<string[]>([]);
+  const [activeRevisionId, setActiveRevisionId] = useState<string | null>(null);
+  const [inlineNoteMessage, setInlineNoteMessage] = useState('');
+  const [inlineNoteLine, setInlineNoteLine] = useState('');
+  const [timelineError, setTimelineError] = useState<string | null>(null);
   const { files } = useFiles();
   const [workingDraftByFile, setWorkingDraftByFile] = useState<Record<string, string>>({});
   const [lastCheckpointAtByFile, setLastCheckpointAtByFile] = useState<Record<string, string>>({});
   const [jumpToHeadingToken, setJumpToHeadingToken] = useState('');
 
-  const { content: loadedContent, revisions, isLoading, saveContent } = useFileContent(selectedFile);
+  const { content: loadedContent, revisions, isLoading, saveContent, updateRevisionInlineNotes } = useFileContent(selectedFile);
   const {
     documents,
     isLoading: isDocumentsLoading,
@@ -464,17 +471,6 @@ export default function EditorPage() {
       setStatus(next[0]);
     }
   }
-
-  const handleCompareToggle = useCallback(() => {
-    if (compareMode && compareHasUnsavedChanges) {
-      const shouldLeave = window.confirm('You have unsaved merged edits. Leave compare mode anyway?');
-      if (!shouldLeave) return;
-    }
-    setCompareMode((mode) => !mode);
-    if (compareMode) {
-      setCompareHasUnsavedChanges(false);
-    }
-  }, [compareHasUnsavedChanges, compareMode]);
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-950 text-gray-100">

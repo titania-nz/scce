@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { readRevisions } from '@/lib/revisionStorage';
 import { parseFilename } from '@/lib/parseFilename';
 import { readRevisions, writeRevisions } from '@/lib/revisionStorage';
 import { RevisionInlineNote } from '@/types';

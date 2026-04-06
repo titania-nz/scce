@@ -13,7 +13,11 @@ import {
   FileEntry,
   RevisionAuditEvent,
   RevisionComment,
+  RevisionLock,
+  RevisionMention,
+  RevisionNotification,
   ReviewRequest,
+  RevisionPresence,
   RevisionEntry,
   RevisionNote,
 } from '@/types';
