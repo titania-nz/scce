@@ -764,7 +764,9 @@ export default function Sidebar({
                                     {!selectionMode && (
                                       <div className="ml-auto flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
                                         <button
+                                          type="button"
                                           onClick={(e) => {
+                                            e.preventDefault();
                                             e.stopPropagation();
                                             startRename(revision.file);
                                           }}
@@ -777,9 +779,11 @@ export default function Sidebar({
                                           </svg>
                                         </button>
                                         <button
+                                          type="button"
                                           onClick={(e) => {
+                                            e.preventDefault();
                                             e.stopPropagation();
-                                            handleDelete(revision.file);
+                                            void handleDelete(revision.file);
                                           }}
                                           className="text-gray-400 hover:text-red-400 p-0.5"
                                           title="Delete"
