@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic';
 import Sidebar from './Sidebar';
 import PreviewPane from './PreviewPane';
 import Toolbar from './Toolbar';
+import CompareView from './CompareView';
 import { useFileContent } from '@/hooks/useFileContent';
 import { useAutoSave } from '@/hooks/useAutoSave';
 
@@ -17,6 +18,7 @@ export default function EditorPage() {
   const [isDirty, setIsDirty] = useState(false);
   const [mobileView, setMobileView] = useState<'edit' | 'preview'>('edit');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [compareMode, setCompareMode] = useState(false);
 
   const { content: loadedContent, isLoading, saveContent } = useFileContent(selectedFile);
   const prevFileRef = useRef<string | null>(null);
@@ -120,12 +122,16 @@ export default function EditorPage() {
           isDirty={isDirty}
           isSaving={isSaving}
           mobileView={mobileView}
+          compareMode={compareMode}
           onMobileViewChange={setMobileView}
           onSave={handleSaveNow}
           onToggleSidebar={() => setSidebarOpen((o) => !o)}
+          onToggleCompare={() => setCompareMode((m) => !m)}
         />
 
-        {!selectedFile ? (
+        {compareMode ? (
+          <CompareView />
+        ) : !selectedFile ? (
           <div className="flex-1 flex flex-col items-center justify-center text-gray-500 gap-3">
             <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
