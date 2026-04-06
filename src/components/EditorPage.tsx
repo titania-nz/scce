@@ -6,7 +6,6 @@ import Sidebar from './Sidebar';
 import PreviewPane from './PreviewPane';
 import Toolbar from './Toolbar';
 import CompareView from './CompareView';
-import DiffView from './DiffView';
 import DocumentDashboard from './DocumentDashboard';
 import { useFileContent } from '@/hooks/useFileContent';
 import { useAutoSave } from '@/hooks/useAutoSave';

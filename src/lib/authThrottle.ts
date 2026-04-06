@@ -26,7 +26,7 @@ function getClientIp(request: Request): string {
   const realIp = request.headers.get('x-real-ip');
   if (realIp) return realIp.trim();
 
-  return { blocked: false, retryAfterSeconds: 0 };
+  return 'unknown';
 }
 
 // Public hook/helper: called from UI code to encapsulate shared stateful behavior.
