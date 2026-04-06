@@ -11,8 +11,6 @@ interface SaveContentOptions {
   status?: RevisionStatus;
 }
 
-export function useFileContent(filename: string | null) {
-  const key = filename ? `/api/files/${encodeURIComponent(filename)}` : null;
 export function useFileContent(filename: string | null, revisionId?: string | null) {
   const key = filename
     ? `/api/files/${encodeURIComponent(filename)}${revisionId ? `?revisionId=${encodeURIComponent(revisionId)}` : ''}`

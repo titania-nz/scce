@@ -30,34 +30,10 @@ function parseTags(input: unknown): string[] {
 }
 
 export async function GET(_request: NextRequest, { params }: Params) {
-import {
-  createRevision,
-  deleteFile,
-  getCurrentDraftContent,
-  readRevision,
-  renameFile,
-} from '@/lib/fileStorage';
-
-type Params = { params: Promise<{ filename: string }> };
-
-export async function GET(request: NextRequest, { params }: Params) {
   const { filename } = await params;
-  const revisionId = request.nextUrl.searchParams.get('revisionId');
   try {
     const [content, revisions] = await Promise.all([readFile(filename), readRevisions(filename)]);
     return NextResponse.json({ name: filename, content, revisions });
-    if (revisionId) {
-      const content = await readRevision(filename, revisionId);
-      return NextResponse.json({ name: filename, content, revisionId });
-    }
-
-    const draft = await getCurrentDraftContent(filename);
-    return NextResponse.json({
-      name: filename,
-      content: draft.content,
-      revisionId: draft.revisionId,
-      currentDraftRevisionId: draft.revisionId,
-    });
   } catch (err: unknown) {
     const e = err as { status?: number; message?: string };
     if (e.status === 404) return NextResponse.json({ error: 'File not found' }, { status: 404 });
@@ -72,7 +48,6 @@ export async function PUT(request: NextRequest, { params }: Params) {
     const body = await request.json();
 
     if ('newName' in body) {
-      // Rename operation
       const { newName } = body;
       if (!newName || typeof newName !== 'string') {
         return NextResponse.json({ error: 'Invalid new filename' }, { status: 400 });
@@ -81,7 +56,6 @@ export async function PUT(request: NextRequest, { params }: Params) {
       await renameRevisions(filename, newName);
       return NextResponse.json({ name: newName });
     } else if ('content' in body) {
-      // Save operation
       const { content } = body;
       if (typeof content !== 'string') {
         return NextResponse.json({ error: 'Invalid content' }, { status: 400 });

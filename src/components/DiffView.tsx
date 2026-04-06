@@ -3,19 +3,15 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { computeDiff, DiffHunk, DiffLine } from '@/lib/diffUtils';
 
-export interface RevisionDescriptor {
-  filename: string;
-  chapter: string;
-  timestampLabel: string;
-  sourceLabel: string;
-  noteSummary: string;
-}
-
 interface DiffViewProps {
   contentA: string;
   contentB: string;
-  revisionA: RevisionDescriptor;
-  revisionB: RevisionDescriptor;
+  filenameA: string;
+  filenameB: string;
+  actionLabel?: string;
+  actionHint?: string;
+  actionDisabled?: boolean;
+  onAction?: () => void | Promise<void>;
 }
 
 function DiffLineRow({ line }: { line: DiffLine }) {
@@ -40,9 +36,7 @@ function DiffLineRow({ line }: { line: DiffLine }) {
       <span className={`${lineNumClass} pr-1`}>{line.lineNumA ?? ''}</span>
       <span className={`${lineNumClass} pr-2`}>{line.lineNumB ?? ''}</span>
       <span className={prefixClass}>{prefix}</span>
-      <span className="flex-1 pl-2 whitespace-pre-wrap break-all text-gray-200 min-w-0">
-        {line.text || '\u00a0'}
-      </span>
+      <span className="flex-1 pl-2 whitespace-pre-wrap break-all text-gray-200 min-w-0">{line.text || '\u00a0'}</span>
     </div>
   );
 }
@@ -82,24 +76,21 @@ export default function DiffView({
   actionDisabled = false,
   onAction,
 }: DiffViewProps) {
-function formatRevisionHeader(revision: RevisionDescriptor) {
-  return `${revision.timestampLabel} · ${revision.sourceLabel} · ${revision.noteSummary}`;
-}
-
-export default function DiffView({ contentA, contentB, revisionA, revisionB }: DiffViewProps) {
   const diff = useMemo(() => computeDiff(contentA, contentB), [contentA, contentB]);
   const [activeIdx, setActiveIdx] = useState(0);
   const hunkRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
-  // Reset navigation when files change
   useEffect(() => {
     setActiveIdx(0);
   }, [contentA, contentB]);
 
-  const setHunkRef = useCallback((id: number) => (el: HTMLDivElement | null) => {
-    if (el) hunkRefs.current.set(id, el);
-    else hunkRefs.current.delete(id);
-  }, []);
+  const setHunkRef = useCallback(
+    (id: number) => (el: HTMLDivElement | null) => {
+      if (el) hunkRefs.current.set(id, el);
+      else hunkRefs.current.delete(id);
+    },
+    [],
+  );
 
   function navigateTo(idx: number) {
     setActiveIdx(idx);
@@ -110,26 +101,16 @@ export default function DiffView({ contentA, contentB, revisionA, revisionB }: D
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-gray-950">
-      {/* Sticky header */}
       <div className="shrink-0 flex items-center gap-3 px-3 h-10 bg-gray-900 border-b border-gray-700 text-xs sticky top-0 z-10">
-        {/* Stats */}
         <span className="text-green-400 font-mono">+{totalAdditions}</span>
         <span className="text-red-400 font-mono">-{totalRemovals}</span>
 
-        {/* Filenames */}
         <span className="text-gray-500 truncate flex-1 min-w-0">
-          <span className="text-gray-300">{revisionA.chapter}</span>
+          <span className="text-gray-300">{filenameA}</span>
           <span className="mx-1">vs</span>
-          <span className="text-gray-300">{revisionB.chapter}</span>
+          <span className="text-gray-300">{filenameB}</span>
         </span>
 
-        <span className="text-gray-500 truncate min-w-0 hidden lg:inline">
-          <span className="text-gray-300">{formatRevisionHeader(revisionA)}</span>
-          <span className="mx-1">vs</span>
-          <span className="text-gray-300">{formatRevisionHeader(revisionB)}</span>
-        </span>
-
-        {/* Hunk navigation */}
         {!isIdentical && hunks.length > 0 && (
           <div className="flex items-center gap-1 shrink-0">
             <button
@@ -166,12 +147,9 @@ export default function DiffView({ contentA, contentB, revisionA, revisionB }: D
         )}
       </div>
 
-      {/* Diff content */}
       <div className="flex-1 overflow-y-auto">
         {isIdentical ? (
-          <div className="flex-1 flex items-center justify-center h-full text-gray-400 text-sm">
-            Files are identical
-          </div>
+          <div className="flex-1 flex items-center justify-center h-full text-gray-400 text-sm">Files are identical</div>
         ) : (
           hunks.map((hunk) => (
             <HunkBlock
