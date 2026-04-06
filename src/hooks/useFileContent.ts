@@ -5,7 +5,11 @@ import { FileContentResponse, Revision, RevisionInlineNote, RevisionStatus } fro
 import { buildFileApiPath, buildFileDraftApiPath, buildFileRevisionsApiPath } from '@/lib/fileApiPath';
 import { fetchJson } from '@/lib/fetchJson';
 
-const fetcher = (url: string) => fetchJson<FileContentResponse>(url, 'Could not load file content');
+const fetcher = (url: string) =>
+  fetch(url).then((r) => {
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  });
 
 interface SaveContentOptions {
   note?: string;

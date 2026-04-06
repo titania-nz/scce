@@ -8,10 +8,6 @@ interface UseAutoSaveOptions {
   filename: string | null;
   isDirty: boolean;
   saveWorkingCopyFn: (content: string) => Promise<void>;
-  /**
-   * @deprecated Use saveCheckpointFn instead.
-   */
-  saveFn?: (content: string) => Promise<void>;
   saveCheckpointFn?: (content: string) => Promise<void>;
   debounceMs?: number;
 }
@@ -22,7 +18,6 @@ export function useAutoSave({
   filename,
   isDirty,
   saveWorkingCopyFn,
-  saveFn,
   saveCheckpointFn,
   debounceMs = 1500,
 }: UseAutoSaveOptions) {
@@ -31,11 +26,11 @@ export function useAutoSave({
   const [debouncedContent] = useDebounce(content, debounceMs);
   const isDirtyRef = useRef(isDirty);
   const saveWorkingCopyFnRef = useRef(saveWorkingCopyFn);
-  const saveCheckpointFnRef = useRef(saveFn ?? saveCheckpointFn);
+  const saveCheckpointFnRef = useRef(saveCheckpointFn);
 
   isDirtyRef.current = isDirty;
   saveWorkingCopyFnRef.current = saveWorkingCopyFn;
-  saveCheckpointFnRef.current = saveFn ?? saveCheckpointFn;
+  saveCheckpointFnRef.current = saveCheckpointFn;
 
   // Debounced auto-save to working copy buffer.
   useEffect(() => {

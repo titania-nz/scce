@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { diffLines, Change } from 'diff';
-import { DiffLine } from '@/lib/diffUtils';
+import { DiffLine, DiffHunk, buildPreparedDiff } from '@/lib/diffUtils';
 
 interface DiffViewProps {
   contentA: string;
@@ -16,110 +16,7 @@ interface DiffViewProps {
   onAction?: () => void | Promise<void>;
 }
 
-interface DisplayHunk {
-  id: number;
-  lines: DiffLine[];
-}
-
-interface MergeHunk {
-  id: number;
-  contentA: string;
-  contentB: string;
-}
-
-interface PreparedDiff {
-  hunks: DisplayHunk[];
-  mergeHunks: MergeHunk[];
-  totalAdditions: number;
-  totalRemovals: number;
-  isIdentical: boolean;
-  stableMergedBContent: string;
-}
-
-function normalizeChunkLines(value: string): string[] {
-  const lines = value.split('\n');
-  if (lines[lines.length - 1] === '') lines.pop();
-  return lines;
-}
-
-function buildPreparedDiff(a: string, b: string): PreparedDiff {
-  const changes = diffLines(a, b);
-  const stableMergedBContent = changes.filter((change) => !change.removed).map((change) => change.value).join('');
-
-  const hunks: DisplayHunk[] = [];
-  const mergeHunks: MergeHunk[] = [];
-  let lineNumA = 1;
-  let lineNumB = 1;
-  let totalAdditions = 0;
-  let totalRemovals = 0;
-  let i = 0;
-  let mergeId = 0;
-
-  while (i < changes.length) {
-    const change = changes[i];
-    if (!change.added && !change.removed) {
-      const contextLineCount = normalizeChunkLines(change.value).length;
-      lineNumA += contextLineCount;
-      lineNumB += contextLineCount;
-      i++;
-      continue;
-    }
-
-    const group: Change[] = [];
-    while (i < changes.length && (changes[i].added || changes[i].removed)) {
-      group.push(changes[i]);
-      i++;
-    }
-
-    const contentA = group.filter((entry) => !!entry.removed).map((entry) => entry.value).join('');
-    const contentB = group.filter((entry) => !!entry.added).map((entry) => entry.value).join('');
-    mergeHunks.push({ id: mergeId, contentA, contentB });
-    const hunkLines: DiffLine[] = [];
-
-    for (const entry of group) {
-      const kind = entry.added ? 'added' : 'removed';
-      const lines = normalizeChunkLines(entry.value);
-      for (const text of lines) {
-        if (kind === 'added') {
-          totalAdditions++;
-          const diffLine: DiffLine = { kind, text, lineNumA: null, lineNumB };
-          hunkLines.push(diffLine);
-          lineNumB++;
-        } else {
-          totalRemovals++;
-          const diffLine: DiffLine = { kind, text, lineNumA, lineNumB: null };
-          hunkLines.push(diffLine);
-          lineNumA++;
-        }
-      }
-    }
-    hunks.push({ id: mergeId, lines: hunkLines });
-    mergeId++;
-  }
-
-  const isIdentical = totalAdditions === 0 && totalRemovals === 0;
-  if (isIdentical) {
-    return {
-      hunks: [],
-      mergeHunks,
-      totalAdditions: 0,
-      totalRemovals: 0,
-      isIdentical: true,
-      stableMergedBContent,
-    };
-  }
-
-  return {
-    hunks,
-    mergeHunks,
-    totalAdditions,
-    totalRemovals,
-    isIdentical,
-    stableMergedBContent,
-  };
-}
-
-function DiffLineRow({ line }: { line: DiffLine; key?: string | number }) {
+function DiffLineRow({ line }: { line: DiffLine }) {
   const lineNumClass = 'w-10 shrink-0 text-right select-none text-gray-600 tabular-nums';
 
   let rowClass = 'flex font-mono text-xs leading-5';
@@ -154,13 +51,12 @@ function HunkBlock({
   onResolve,
   hunkRef,
 }: {
-  hunk: DisplayHunk;
+  hunk: DiffHunk;
   total: number;
   isActive: boolean;
   resolution?: 'a' | 'b';
   onResolve: (resolution: 'a' | 'b') => void;
   hunkRef: (el: HTMLDivElement | null) => void;
-  key?: string | number;
 }) {
   return (
     <div ref={hunkRef}>
