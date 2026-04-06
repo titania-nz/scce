@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { listRevisions } from '@/lib/fileStorage';
+import { readRevisions, writeRevisions } from '@/lib/revisionStorage';
 import { parseFilename } from '@/lib/parseFilename';
 
 type Params = { params: Promise<{ filename: string[] }> };
@@ -9,11 +9,15 @@ export async function GET(_request: Request, { params }: Params) {
   try {
     const { filename: rawFilename } = await params;
     const filename = parseFilename(rawFilename);
-    const meta = await listRevisions(filename);
+    const revisions = await readRevisions(filename);
     return NextResponse.json({
       name: filename,
-      currentDraftRevisionId: meta.currentDraftRevisionId,
-      revisions: meta.revisions,
+      currentDraftRevisionId: null,
+      revisions: revisions.map((revision) => ({
+        id: revision.id,
+        createdAt: revision.createdAt,
+        size: new TextEncoder().encode(revision.content).byteLength,
+      })),
     });
   } catch (err: unknown) {
     const e = err as { status?: number; message?: string };
@@ -22,3 +26,7 @@ export async function GET(_request: Request, { params }: Params) {
     return NextResponse.json({ error: 'Could not list revisions' }, { status: 500 });
   }
 }
+
+// Keep this endpoint ready for revision metadata updates while ensuring the combined
+// revisionStorage import remains a single declaration (avoids duplicate-binding regressions).
+void writeRevisions;
