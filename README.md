@@ -11,6 +11,18 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000). Notes are stored in the `notes/` directory by default. Set the `NOTES_DIR` environment variable to use a different path.
 
+### Local validation
+
+Before opening a pull request, run:
+
+```bash
+npm run lint
+npm run typecheck
+npm run test
+```
+
+CI runs the same commands on pull requests. The workflow currently uses non-blocking mode (`continue-on-error`) while baseline issues are being resolved; remove that setting to enforce hard required checks.
+
 ## Deploying to Netlify
 
 ### 1. Connect the repository
