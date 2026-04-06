@@ -75,9 +75,9 @@ async function readRevisionMeta(filename: string): Promise<FileRevisionMeta> {
     if (!store) return { ...EMPTY_META };
 
     try {
-      const buffer = await store.get(getRevisionMetaKey(filename));
-      if (!buffer) return { ...EMPTY_META };
-      const parsed = JSON.parse(new TextDecoder().decode(buffer)) as FileRevisionMeta;
+      const text = await store.get(getRevisionMetaKey(filename), { type: 'text' }) as string | null;
+      if (text === null) return { ...EMPTY_META };
+      const parsed = JSON.parse(text) as FileRevisionMeta;
       return {
         currentDraftRevisionId: parsed.currentDraftRevisionId ?? null,
         revisions: (parsed.revisions ?? []).slice().sort(sortRevisionsDesc),
@@ -120,9 +120,9 @@ async function readRevisionContent(filename: string, revisionId: string): Promis
       throw Object.assign(new Error('Revision not found'), { status: 404 });
     }
     try {
-      const buffer = await store.get(getRevisionContentKey(filename, revisionId));
-      if (!buffer) throw new Error('missing');
-      return new TextDecoder().decode(buffer);
+      const text = await store.get(getRevisionContentKey(filename, revisionId), { type: 'text' }) as string | null;
+      if (text === null) throw new Error('missing');
+      return text;
     } catch {
       throw Object.assign(new Error('Revision not found'), { status: 404 });
     }
@@ -205,8 +205,9 @@ async function readDocumentRootRecord(documentId: string): Promise<Document> {
     const store = getBlobStore();
     if (!store) throw Object.assign(new Error('Document not found'), { status: 404 });
     try {
-      const buffer = await store.get(documentMetaBlobKey(documentId));
-      return JSON.parse(new TextDecoder().decode(buffer)) as Document;
+      const text = await store.get(documentMetaBlobKey(documentId), { type: 'text' }) as string | null;
+      if (text === null) throw new Error('not found');
+      return JSON.parse(text) as Document;
     } catch {
       throw Object.assign(new Error('Document not found'), { status: 404 });
     }
@@ -219,33 +220,32 @@ async function readDocumentRootRecord(documentId: string): Promise<Document> {
   return JSON.parse(fs.readFileSync(metaPath, 'utf8')) as Document;
 }
 
-async function migrateLegacyFileToInitialRevision(filename: string): Promise<void> {
+async function migrateLegacyFileToInitialRevision(filename: string): Promise<number> {
   const key = resolveSafePath(filename);
   let content = '';
   let createdAt = nowIso();
 
   if (isNetlifyRuntime) {
     const store = getBlobStore();
-    if (!store) return;
-    try {
-      const buffer = await store.get(key);
-      content = new TextDecoder().decode(buffer);
-    } catch {
-      return;
-    }
+    if (!store) return 0;
+    const text = await store.get(key, { type: 'text' }) as string | null;
+    if (text === null) return 0;
+    content = text;
   } else {
     const filePath = key;
     if (!fs.existsSync(filePath)) {
-      return;
+      return 0;
     }
     const stat = fs.statSync(filePath);
     createdAt = stat.mtime.toISOString();
     content = fs.readFileSync(filePath, 'utf8');
   }
 
+  const byteSize = Buffer.byteLength(content, 'utf-8');
+
   const documentId = legacyFilenameToDocumentId(filename);
   const exists = await documentExists(documentId);
-  if (exists) return;
+  if (exists) return byteSize;
 
   await createDocumentRootRecord({
     id: documentId,
@@ -264,6 +264,8 @@ async function migrateLegacyFileToInitialRevision(filename: string): Promise<voi
       },
     ],
   });
+
+  return byteSize;
 }
 
 // Public hook/helper: called from UI code to encapsulate shared stateful behavior.
@@ -385,8 +387,9 @@ export async function listRevisionsByDocumentId(documentId: string): Promise<Doc
 
     for (const blob of blobs) {
       if (!blob.key.endsWith('.json')) continue;
-      const buffer = await store.get(blob.key);
-      const parsed = JSON.parse(new TextDecoder().decode(buffer)) as DocumentRevision;
+      const text = await store.get(blob.key, { type: 'text' }) as string | null;
+      if (text === null) continue;
+      const parsed = JSON.parse(text) as DocumentRevision;
       revisions.push(ensureRevision(parsed));
     }
 
@@ -422,8 +425,9 @@ export async function getRevision(documentId: string, revisionId: string): Promi
     const store = getBlobStore();
     if (!store) throw Object.assign(new Error('Revision not found'), { status: 404 });
     try {
-      const buffer = await store.get(documentRevisionBlobKey(documentId, revisionId));
-      return ensureRevision(JSON.parse(new TextDecoder().decode(buffer)) as DocumentRevision);
+      const text = await store.get(documentRevisionBlobKey(documentId, revisionId), { type: 'text' }) as string | null;
+      if (text === null) throw new Error('not found');
+      return ensureRevision(JSON.parse(text) as DocumentRevision);
     } catch {
       throw Object.assign(new Error('Revision not found'), { status: 404 });
     }
@@ -460,11 +464,13 @@ export async function listFiles(): Promise<FileEntry[]> {
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
 
+    const result: FileEntry[] = [];
     for (const file of files) {
-      await migrateLegacyFileToInitialRevision(file.name);
+      const size = await migrateLegacyFileToInitialRevision(file.name);
+      result.push({ ...file, size });
     }
 
-    return files;
+    return result;
   }
 
   const dir = getNotesDir();
@@ -526,9 +532,9 @@ export async function readFile(filename: string): Promise<string> {
     const store = getBlobStore();
     if (!store) throw Object.assign(new Error('File not found'), { status: 404 });
     try {
-      const buffer = await store.get(key);
-      if (!buffer) throw new Error('missing');
-      return new TextDecoder().decode(buffer);
+      const text = await store.get(key, { type: 'text' }) as string | null;
+      if (text === null) throw new Error('missing');
+      return text;
     } catch {
       throw Object.assign(new Error('File not found'), { status: 404 });
     }
@@ -637,7 +643,7 @@ export async function deleteFile(filename: string): Promise<void> {
     const store = getBlobStore();
     if (!store) throw Object.assign(new Error('File not found'), { status: 404 });
     const existing = await store.get(key);
-    if (!existing) throw Object.assign(new Error('File not found'), { status: 404 });
+    if (existing === null) throw Object.assign(new Error('File not found'), { status: 404 });
     await store.delete(key);
     await removeRevisionData(filename);
     await removeDocumentData(filename);
@@ -659,12 +665,11 @@ export async function renameFile(oldName: string, newName: string): Promise<void
   if (isNetlifyRuntime) {
     const store = getBlobStore();
     if (!store) throw Object.assign(new Error('File not found'), { status: 404 });
-    const existing = await store.get(oldKey);
-    if (!existing) throw Object.assign(new Error('File not found'), { status: 404 });
-    const newExists = await store.get(newKey);
-    if (newExists) throw Object.assign(new Error('File already exists'), { status: 409 });
-    const content = typeof existing === 'string' ? existing : new TextDecoder().decode(existing as ArrayBuffer);
-    await store.set(newKey, content);
+    const existing = await store.get(oldKey, { type: 'text' }) as string | null;
+    if (existing === null) throw Object.assign(new Error('File not found'), { status: 404 });
+    const newExists = await store.get(newKey, { type: 'text' }) as string | null;
+    if (newExists !== null) throw Object.assign(new Error('File already exists'), { status: 409 });
+    await store.set(newKey, existing);
     await copyRevisionData(oldName, newName);
     await store.delete(oldKey);
     await removeRevisionData(oldName);

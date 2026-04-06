@@ -37,9 +37,9 @@ export async function readRevisions(filename: string): Promise<Revision[]> {
     const store = getBlobStore();
     if (!store) return [];
     try {
-      const buffer = await store.get(getRevisionBlobKey(filename));
-      if (!buffer) return [];
-      const parsed = JSON.parse(new TextDecoder().decode(buffer));
+      const text = await store.get(getRevisionBlobKey(filename), { type: 'text' }) as string | null;
+      if (!text) return [];
+      const parsed = JSON.parse(text);
       if (!Array.isArray(parsed)) return [];
       return parsed.map((item) => normalizeRevision(item as Revision));
     } catch {
