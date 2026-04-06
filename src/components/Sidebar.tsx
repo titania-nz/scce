@@ -2,20 +2,25 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFiles } from '@/hooks/useFiles';
-import { FileEntry } from '@/types';
+import { FileContentResponse, FileEntry } from '@/types';
 import { buildFileApiPath } from '@/lib/fileApiPath';
+import { RevisionMetaSummary, parseMetaFromContent } from '@/lib/revisionMeta';
 
 interface SidebarProps {
   selectedFile: string | null;
   onFileSelect: (filename: string) => void;
   onFileDeleted: (filename: string) => void;
   onFileRenamed: (oldName: string, newName: string) => void;
+  onJumpToHeading: (heading: string) => void;
+  applyFilter: (filter: { chapterSearch: string; metaSearch: string; dateFrom: string; dateTo: string }) => void;
 }
 
-interface RevisionMeta {
-  tags: string[];
-  note: string;
-  status: string;
+type RevisionMeta = RevisionMetaSummary;
+
+interface FileEntryWithMeta extends FileEntry {
+  tags?: string[];
+  note?: string;
+  status?: string;
 }
 
 interface RevisionItem {
@@ -57,6 +62,22 @@ const DEFAULT_META: RevisionMeta = {
   note: '',
   status: '',
 };
+const SAVED_FILTERS_STORAGE_KEY = 'scce.savedSidebarFilters';
+
+// Helper function: keeps a small, testable transformation isolated from UI side effects.
+function getCurrentWeekRange(): { from: string; to: string } {
+  const now = new Date();
+  const startOfWeek = new Date(now);
+  startOfWeek.setDate(now.getDate() - now.getDay());
+  startOfWeek.setHours(0, 0, 0, 0);
+  const endOfWeek = new Date(startOfWeek);
+  endOfWeek.setDate(startOfWeek.getDate() + 6);
+  endOfWeek.setHours(23, 59, 59, 999);
+  return {
+    from: startOfWeek.toISOString().slice(0, 10),
+    to: endOfWeek.toISOString().slice(0, 10),
+  };
+}
 
 // Helper function: keeps a small, testable transformation isolated from UI side effects.
 function formatDate(value: string | undefined): string {
@@ -327,12 +348,67 @@ function parseFileStructure(fileName: string) {
   };
 }
 
+// Helper function: keeps a small, testable transformation isolated from UI side effects.
+function parseHeadings(content: string): HeadingItem[] {
+  return content
+    .split('\n')
+    .map((line) => line.match(/^(#{1,6})\s+(.+)$/))
+    .filter((match): match is RegExpMatchArray => Boolean(match))
+    .map((match) => ({
+      level: match[1].length,
+      text: match[2].trim(),
+    }));
+}
+
+// Helper function: keeps a small, testable transformation isolated from UI side effects.
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Helper function: keeps a small, testable transformation isolated from UI side effects.
+function getSnippet(content: string, query: string): string {
+  const normalized = content.replace(/\s+/g, ' ').trim();
+  if (!normalized) return '';
+  if (!query.trim()) return normalized.slice(0, 180);
+
+  const regex = new RegExp(escapeRegExp(query), 'i');
+  const match = regex.exec(normalized);
+  if (!match) return normalized.slice(0, 180);
+
+  const start = Math.max(0, match.index - 70);
+  const end = Math.min(normalized.length, match.index + match[0].length + 90);
+  const prefix = start > 0 ? '…' : '';
+  const suffix = end < normalized.length ? '…' : '';
+  return `${prefix}${normalized.slice(start, end)}${suffix}`;
+}
+
+// Helper function: keeps a small, testable transformation isolated from UI side effects.
+function renderHighlightedText(source: string, query: string) {
+  if (!query.trim()) return <>{source}</>;
+  const regex = new RegExp(`(${escapeRegExp(query)})`, 'ig');
+  const parts = source.split(regex);
+  const normalizedQuery = query.toLowerCase();
+  return (
+    <>
+      {parts.map((part, idx) => (
+        part.toLowerCase() === normalizedQuery ? (
+          <mark key={`${part}-${idx}`} className="bg-yellow-300/30 text-yellow-100 rounded px-0.5">{part}</mark>
+        ) : (
+          <span key={`${part}-${idx}`}>{part}</span>
+        )
+      ))}
+    </>
+  );
+}
+
 // Main component export: this is the entry point rendered by parent routes/components.
 export default function Sidebar({
   selectedFile,
   onFileSelect,
   onFileDeleted,
   onFileRenamed,
+  onJumpToHeading,
+  applyFilter,
 }: SidebarProps) {
   const { files, isLoading, createFile, deleteFile, deleteFiles, renameFile } = useFiles();
   const [newFileName, setNewFileName] = useState('');
@@ -348,8 +424,17 @@ export default function Sidebar({
   const [collapsedDocuments, setCollapsedDocuments] = useState<Record<string, boolean>>({});
   const [collapsedChapters, setCollapsedChapters] = useState<Record<string, boolean>>({});
   const [revisionMetaByFile, setRevisionMetaByFile] = useState<Record<string, RevisionMeta>>({});
+  const [searchEntries, setSearchEntries] = useState<SearchEntry[]>([]);
+  const [headingsByFile, setHeadingsByFile] = useState<Record<string, HeadingItem[]>>({});
+  const [globalQuery, setGlobalQuery] = useState('');
+  const [facetDocument, setFacetDocument] = useState('');
+  const [facetStatus, setFacetStatus] = useState('');
+  const [facetTag, setFacetTag] = useState('');
+  const [facetDateRange, setFacetDateRange] = useState<'all' | '7d' | '30d' | '90d'>('all');
+  const [selectedHeading, setSelectedHeading] = useState('');
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [savedFilters, setSavedFilters] = useState<Array<{ id: string; name: string; filter: any }>>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const zipInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
@@ -362,14 +447,55 @@ export default function Sidebar({
 
     async function loadMetadata() {
       const nextMeta: Record<string, RevisionMeta> = {};
+      const nextSearchEntries: SearchEntry[] = [];
+      const nextHeadingsByFile: Record<string, HeadingItem[]> = {};
 
       await Promise.all(
         files.map(async (file) => {
           try {
             const res = await fetch(buildFileApiPath(file.name));
             if (!res.ok) return;
-            const payload = (await res.json()) as { content?: string };
-            nextMeta[file.name] = parseMetaFromContent(payload.content ?? '');
+            const payload = (await res.json()) as FileContentResponse;
+            const structure = parseFileStructure(file.name);
+            const currentMeta = parseMetaFromContent(payload.content ?? '');
+            nextMeta[file.name] = currentMeta;
+            nextHeadingsByFile[file.name] = parseHeadings(payload.content ?? '');
+
+            const currentCreatedAtSource = file.ctime ?? file.mtime;
+            const currentCreatedAt = new Date(currentCreatedAtSource);
+            nextSearchEntries.push({
+              id: `${file.name}::current`,
+              sourceType: 'current',
+              file,
+              document: structure.document,
+              chapter: structure.chapter,
+              revisionLabel: structure.revisionLabel,
+              createdAt: Number.isNaN(currentCreatedAt.getTime()) ? new Date(file.mtime) : currentCreatedAt,
+              createdAtIso: currentCreatedAtSource,
+              tags: currentMeta.tags,
+              status: currentMeta.status,
+              note: currentMeta.note,
+              content: payload.content ?? '',
+            });
+
+            payload.revisions.forEach((revision, index) => {
+              const revisionMeta = parseMetaFromContent(revision.content);
+              const revisionCreatedAt = new Date(revision.createdAt);
+              nextSearchEntries.push({
+                id: `${file.name}::${revision.id}`,
+                sourceType: 'revision',
+                file,
+                document: structure.document,
+                chapter: structure.chapter,
+                revisionLabel: `R${index + 1}`,
+                createdAt: Number.isNaN(revisionCreatedAt.getTime()) ? new Date(file.mtime) : revisionCreatedAt,
+                createdAtIso: revision.createdAt,
+                tags: revision.tags?.length ? revision.tags : revisionMeta.tags,
+                status: revision.status ?? revisionMeta.status,
+                note: revision.note || revisionMeta.note,
+                content: revision.content,
+              });
+            });
           } catch {
             nextMeta[file.name] = DEFAULT_META;
           }
@@ -378,6 +504,8 @@ export default function Sidebar({
 
       if (!cancelled) {
         setRevisionMetaByFile(nextMeta);
+        setSearchEntries(nextSearchEntries);
+        setHeadingsByFile(nextHeadingsByFile);
       }
     }
 
@@ -387,6 +515,81 @@ export default function Sidebar({
       cancelled = true;
     };
   }, [files]);
+
+  const availableDocuments = useMemo(
+    () => Array.from(new Set(searchEntries.map((entry) => entry.document))).sort((a, b) => a.localeCompare(b)),
+    [searchEntries],
+  );
+  const availableStatuses = useMemo(
+    () => Array.from(new Set(searchEntries.map((entry) => entry.status).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [searchEntries],
+  );
+  const availableTags = useMemo(
+    () => Array.from(new Set(searchEntries.flatMap((entry) => entry.tags))).sort((a, b) => a.localeCompare(b)),
+    [searchEntries],
+  );
+
+  const headingOptions = selectedFile ? headingsByFile[selectedFile] ?? [] : [];
+
+  useEffect(() => {
+    setSelectedHeading('');
+  }, [selectedFile]);
+
+  const rankedResults = useMemo<SearchResult[]>(() => {
+    const query = globalQuery.trim().toLowerCase();
+    if (!query) return [];
+
+    const now = Date.now();
+    const minDate = facetDateRange === 'all'
+      ? null
+      : now - (facetDateRange === '7d' ? 7 : facetDateRange === '30d' ? 30 : 90) * 24 * 60 * 60 * 1000;
+
+    return searchEntries
+      .filter((entry) => {
+        if (facetDocument && entry.document !== facetDocument) return false;
+        if (facetStatus && entry.status !== facetStatus) return false;
+        if (facetTag && !entry.tags.includes(facetTag)) return false;
+        if (minDate && entry.createdAt.getTime() < minDate) return false;
+        return true;
+      })
+      .map((entry) => {
+        const haystack = [
+          entry.file.name,
+          entry.document,
+          entry.chapter,
+          entry.status,
+          entry.note,
+          entry.tags.join(' '),
+          entry.content,
+        ].join(' ').toLowerCase();
+
+        if (!haystack.includes(query)) {
+          return null;
+        }
+
+        let score = 0;
+        if (entry.file.name.toLowerCase().includes(query)) score += 12;
+        if (entry.document.toLowerCase().includes(query)) score += 8;
+        if (entry.chapter.toLowerCase().includes(query)) score += 7;
+        if (entry.status.toLowerCase().includes(query)) score += 6;
+        if (entry.tags.some((tag) => tag.toLowerCase().includes(query))) score += 5;
+        if (entry.note.toLowerCase().includes(query)) score += 4;
+        if (entry.content.toLowerCase().includes(query)) score += 3;
+        if (entry.sourceType === 'current') score += 1;
+
+        return {
+          entry,
+          score,
+          snippet: getSnippet(entry.content || entry.note || entry.file.name, query),
+        } satisfies SearchResult;
+      })
+      .filter((result): result is SearchResult => Boolean(result))
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return b.entry.createdAt.getTime() - a.entry.createdAt.getTime();
+      })
+      .slice(0, 60);
+  }, [facetDateRange, facetDocument, facetStatus, facetTag, globalQuery, searchEntries]);
 
   const grouped = useMemo<DocumentGroup[]>(() => {
     const items: RevisionItem[] = files.map((file) => {
@@ -748,6 +951,7 @@ export default function Sidebar({
   }
 
   async function handleRename(oldName: string) {
+    if (renamingInFlightRef.current) return;
     let newName = renameValue.trim();
     if (!newName) {
       setRenamingFile(null);
@@ -758,6 +962,7 @@ export default function Sidebar({
       setRenamingFile(null);
       return;
     }
+    renamingInFlightRef.current = true;
     setError(null);
     try {
       await renameFile(oldName, newName);
@@ -766,6 +971,8 @@ export default function Sidebar({
     } catch (err: unknown) {
       const e = err as { message?: string };
       setError(e.message ?? 'Could not rename file');
+    } finally {
+      renamingInFlightRef.current = false;
     }
   }
 
@@ -775,6 +982,11 @@ export default function Sidebar({
 
   function toggleChapter(key: string) {
     setCollapsedChapters((prev) => ({ ...prev, [key]: !prev[key] }));
+  }
+
+  function handleJumpToHeading() {
+    if (!selectedHeading) return;
+    onJumpToHeading(selectedHeading);
   }
 
   return (
@@ -878,6 +1090,112 @@ export default function Sidebar({
       </div>
 
       <div className="px-3 py-2 border-b border-gray-700 space-y-2">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => applyFilter({ chapterSearch: '', metaSearch: 'needs review', dateFrom: '', dateTo: '' })}
+            className="text-[11px] px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-100"
+          >
+            My review queue
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const { from, to } = getCurrentWeekRange();
+              applyFilter({ chapterSearch: '', metaSearch: 'needs review', dateFrom: from, dateTo: to });
+            }}
+            className="text-[11px] px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-100"
+          >
+            Needs review this week
+          </button>
+          <button
+            type="button"
+            onClick={saveCurrentFilter}
+            className="text-[11px] px-2 py-1 rounded bg-blue-700 hover:bg-blue-600 text-white"
+          >
+            Save current filter
+          </button>
+        </div>
+
+        {savedFilters.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {savedFilters.map((filter) => (
+              <div key={filter.id} className="inline-flex items-center rounded border border-gray-600 overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => applyFilter(filter.filter)}
+                  className="text-[11px] px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-100"
+                >
+                  {filter.name}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSavedFilters((prev) => prev.filter((item) => item.id !== filter.id))}
+                  className="text-[11px] px-1.5 py-1 bg-gray-700 hover:bg-red-700 text-gray-300"
+                  aria-label={`Delete saved filter ${filter.name}`}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <input
+          type="text"
+          value={globalQuery}
+          onChange={(e) => setGlobalQuery(e.target.value)}
+          placeholder="Search all files + revisions"
+          className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
+        />
+        {globalQuery.trim() && (
+          <div className="grid grid-cols-2 gap-2">
+            <select
+              value={facetDocument}
+              onChange={(e) => setFacetDocument(e.target.value)}
+              className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600"
+              aria-label="Filter by document"
+            >
+              <option value="">All documents</option>
+              {availableDocuments.map((document) => (
+                <option key={document} value={document}>{document}</option>
+              ))}
+            </select>
+            <select
+              value={facetStatus}
+              onChange={(e) => setFacetStatus(e.target.value)}
+              className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600"
+              aria-label="Filter by status"
+            >
+              <option value="">All statuses</option>
+              {availableStatuses.map((statusOption) => (
+                <option key={statusOption} value={statusOption}>{statusOption}</option>
+              ))}
+            </select>
+            <select
+              value={facetTag}
+              onChange={(e) => setFacetTag(e.target.value)}
+              className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600"
+              aria-label="Filter by tag"
+            >
+              <option value="">All tags</option>
+              {availableTags.map((tag) => (
+                <option key={tag} value={tag}>#{tag}</option>
+              ))}
+            </select>
+            <select
+              value={facetDateRange}
+              onChange={(e) => setFacetDateRange(e.target.value as 'all' | '7d' | '30d' | '90d')}
+              className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600"
+              aria-label="Filter by date range"
+            >
+              <option value="all">All dates</option>
+              <option value="7d">Last 7 days</option>
+              <option value="30d">Last 30 days</option>
+              <option value="90d">Last 90 days</option>
+            </select>
+          </div>
+        )}
         <input
           type="text"
           value={chapterSearch}
@@ -908,6 +1226,32 @@ export default function Sidebar({
           placeholder="Filter by note / tag / status"
           className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
         />
+        {selectedFile && headingOptions.length > 0 && (
+          <div className="flex gap-2">
+            <select
+              value={selectedHeading}
+              onChange={(e) => setSelectedHeading(e.target.value)}
+              className="flex-1 bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600"
+              aria-label="Jump to heading"
+            >
+              <option value="">Jump to heading…</option>
+              {headingOptions.map((heading) => (
+                <option key={`${heading.level}-${heading.text}`} value={heading.text}>
+                  {'  '.repeat(Math.max(0, heading.level - 1))}
+                  {heading.text}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={handleJumpToHeading}
+              disabled={!selectedHeading}
+              className="text-xs px-2 py-1 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 rounded transition-colors"
+            >
+              Go
+            </button>
+          </div>
+        )}
       </div>
 
       {error && (
@@ -1008,6 +1352,35 @@ export default function Sidebar({
       )}
 
       <div className="flex-1 overflow-y-auto">
+        {globalQuery.trim() && (
+          <div className="border-b border-gray-700/60">
+            <div className="px-3 py-2 text-[11px] text-gray-400">
+              {rankedResults.length} result{rankedResults.length === 1 ? '' : 's'}
+            </div>
+            {rankedResults.map((result) => (
+              <button
+                key={result.entry.id}
+                onClick={() => onFileSelect(result.entry.file.name)}
+                className="w-full text-left px-3 py-2 border-t border-gray-800 hover:bg-gray-800/70 transition-colors"
+              >
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="font-semibold text-gray-200 truncate">{result.entry.file.name}</span>
+                  <span className="text-[10px] text-gray-500 uppercase">{result.entry.sourceType}</span>
+                  <span className="ml-auto text-[10px] text-gray-500">{formatDate(result.entry.createdAtIso)}</span>
+                </div>
+                <div className="text-[11px] text-gray-400 truncate mt-0.5">
+                  {result.entry.document} / {result.entry.chapter}
+                </div>
+                <div className="text-[11px] text-gray-300 mt-1 leading-relaxed">
+                  {renderHighlightedText(result.snippet, globalQuery.trim())}
+                </div>
+              </button>
+            ))}
+            {rankedResults.length === 0 && (
+              <div className="px-3 py-3 text-xs text-gray-500">No search matches</div>
+            )}
+          </div>
+        )}
         {isLoading && <div className="px-4 py-3 text-sm text-gray-500">Loading...</div>}
         {!isLoading && grouped.length === 0 && <div className="px-4 py-3 text-sm text-gray-500">No matching files</div>}
 

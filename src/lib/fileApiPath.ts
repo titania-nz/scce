@@ -22,3 +22,11 @@ export function buildDocumentRevisionApiPath(documentId: string, revisionId?: st
   const base = `/api/files/documents/${encodeURIComponent(documentId)}/revisions`;
   return revisionId ? `${base}/${encodeURIComponent(revisionId)}` : base;
 }
+
+export function buildFileExportApiPath(filename: string): string {
+  return `/api/files/export/${encodeFileSegments(filename)}`;
+}
+
+export function buildFilePublishApiPath(filename: string): string {
+  return `/api/files/publish/${encodeFileSegments(filename)}`;
+}
