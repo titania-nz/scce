@@ -2,18 +2,19 @@
 
 import useSWR from 'swr';
 import { FileContentResponse } from '@/types';
+import { getFileApiPath } from '@/lib/apiPath';
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
 export function useFileContent(filename: string | null) {
-  const key = filename ? `/api/files/${encodeURIComponent(filename)}` : null;
+  const key = filename ? getFileApiPath(filename) : null;
   const { data, error, isLoading, mutate } = useSWR<FileContentResponse>(key, fetcher, {
     revalidateOnFocus: false,
   });
 
   async function saveContent(content: string): Promise<void> {
     if (!filename) return;
-    const res = await fetch(`/api/files/${encodeURIComponent(filename)}`, {
+    const res = await fetch(getFileApiPath(filename), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content }),

@@ -1,14 +1,45 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { ReactNode, useMemo, useRef, useState } from 'react';
 import { useFiles } from '@/hooks/useFiles';
 import { FileEntry } from '@/types';
+
+type FolderNode = {
+  folders: Map<string, FolderNode>;
+  files: FileEntry[];
+};
 
 interface SidebarProps {
   selectedFile: string | null;
   onFileSelect: (filename: string) => void;
   onFileDeleted: (filename: string) => void;
   onFileRenamed: (oldName: string, newName: string) => void;
+}
+
+function createFolderNode(): FolderNode {
+  return { folders: new Map(), files: [] };
+}
+
+function buildTree(files: FileEntry[]): FolderNode {
+  const root = createFolderNode();
+
+  for (const file of files) {
+    const parts = file.name.split('/');
+    const fileName = parts.pop();
+    if (!fileName) continue;
+
+    let current = root;
+    for (const folder of parts) {
+      if (!current.folders.has(folder)) {
+        current.folders.set(folder, createFolderNode());
+      }
+      current = current.folders.get(folder)!;
+    }
+
+    current.files.push(file);
+  }
+
+  return root;
 }
 
 export default function Sidebar({
@@ -23,8 +54,11 @@ export default function Sidebar({
   const [clipboardContent, setClipboardContent] = useState<string | null>(null);
   const [renamingFile, setRenamingFile] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['']));
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const tree = useMemo(() => buildTree(files), [files]);
 
   function resetNewInput() {
     setShowNewInput(false);
@@ -32,8 +66,20 @@ export default function Sidebar({
     setClipboardContent(null);
   }
 
+  function toggleFolder(path: string) {
+    setExpandedFolders((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
+  }
+
   async function handleCreate() {
-    let name = newFileName.trim();
+    let name = newFileName.trim().replace(/\\/g, '/');
     if (!name) return;
     if (!name.endsWith('.md')) name += '.md';
     setError(null);
@@ -71,7 +117,7 @@ export default function Sidebar({
         const base = file.name.includes('.')
           ? file.name.replace(/\.[^.]*$/, '')
           : file.name;
-        const name = base.replace(/[^a-zA-Z0-9_\-. ]/g, '_') + '.md';
+        const name = base.replace(/[^a-zA-Z0-9_\-. /]/g, '_') + '.md';
         await createFile(name, content);
         lastCreated = name;
       } catch (err: unknown) {
@@ -101,7 +147,7 @@ export default function Sidebar({
   }
 
   async function handleRename(oldName: string) {
-    let newName = renameValue.trim();
+    let newName = renameValue.trim().replace(/\\/g, '/');
     if (!newName) {
       setRenamingFile(null);
       return;
@@ -122,6 +168,88 @@ export default function Sidebar({
     }
   }
 
+  function renderTree(node: FolderNode, parentPath = '', depth = 0) {
+    const folderItems = Array.from(node.folders.entries()).sort(([a], [b]) => a.localeCompare(b));
+    const fileItems = [...node.files].sort((a, b) => a.name.localeCompare(b.name));
+    const elements: ReactNode[] = [];
+
+    for (const [folderName, child] of folderItems) {
+      const folderPath = parentPath ? `${parentPath}/${folderName}` : folderName;
+      const isExpanded = expandedFolders.has(folderPath);
+      elements.push(
+        <div key={`folder-${folderPath}`}>
+          <button
+            onClick={() => toggleFolder(folderPath)}
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left text-gray-300 hover:bg-gray-800 transition-colors"
+            style={{ paddingLeft: `${12 + depth * 14}px` }}
+          >
+            <span className="text-xs text-gray-500 w-3">{isExpanded ? '▾' : '▸'}</span>
+            <span className="truncate">{folderName}</span>
+          </button>
+          {isExpanded && <div>{renderTree(child, folderPath, depth + 1)}</div>}
+        </div>,
+      );
+    }
+
+    for (const file of fileItems) {
+      const displayName = file.name.split('/').at(-1) ?? file.name;
+      elements.push(
+        <div
+          key={file.name}
+          className={`group flex items-center px-3 py-1.5 cursor-pointer hover:bg-gray-800 transition-colors ${
+            selectedFile === file.name ? 'bg-gray-800 border-l-2 border-blue-500' : 'border-l-2 border-transparent'
+          }`}
+          style={{ paddingLeft: `${24 + depth * 14}px` }}
+        >
+          {renamingFile === file.name ? (
+            <input
+              type="text"
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleRename(file.name);
+                if (e.key === 'Escape') setRenamingFile(null);
+              }}
+              onBlur={() => handleRename(file.name)}
+              className="flex-1 bg-gray-700 text-gray-100 text-sm px-1 py-0.5 rounded border border-gray-500 focus:outline-none focus:border-blue-500"
+              autoFocus
+            />
+          ) : (
+            <>
+              <span
+                className="flex-1 text-sm truncate"
+                onClick={() => onFileSelect(file.name)}
+                title={file.name}
+              >
+                {displayName}
+              </span>
+              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                <button
+                  onClick={(e) => { e.stopPropagation(); startRename(file); }}
+                  className="text-gray-400 hover:text-white p-0.5"
+                  title="Rename"
+                  aria-label={`Rename ${file.name}`}
+                >
+                  ✎
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleDelete(file); }}
+                  className="text-gray-500 hover:text-red-400 p-0.5"
+                  title="Delete"
+                  aria-label={`Delete ${file.name}`}
+                >
+                  ✕
+                </button>
+              </div>
+            </>
+          )}
+        </div>,
+      );
+    }
+
+    return elements;
+  }
+
   return (
     <aside className="flex flex-col h-full bg-gray-900 text-gray-100 w-64 shrink-0">
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
@@ -133,9 +261,7 @@ export default function Sidebar({
             title="Paste from clipboard"
             aria-label="Paste from clipboard"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-            </svg>
+            📋
           </button>
           <button
             onClick={() => fileInputRef.current?.click()}
@@ -143,9 +269,7 @@ export default function Sidebar({
             title="Upload file"
             aria-label="Upload file"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-            </svg>
+            ⤴
           </button>
           <input
             ref={fileInputRef}
@@ -161,9 +285,7 @@ export default function Sidebar({
             title="New file"
             aria-label="New file"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
+            ＋
           </button>
         </div>
       </div>
@@ -177,12 +299,7 @@ export default function Sidebar({
       {showNewInput && (
         <div className="px-3 py-2 border-b border-gray-700">
           {clipboardContent !== null && (
-            <div className="flex items-center gap-1 text-xs text-blue-400 mb-1.5">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-              </svg>
-              Clipboard content ready
-            </div>
+            <div className="text-xs text-blue-400 mb-1.5">Clipboard content ready</div>
           )}
           <input
             type="text"
@@ -192,7 +309,7 @@ export default function Sidebar({
               if (e.key === 'Enter') handleCreate();
               if (e.key === 'Escape') resetNewInput();
             }}
-            placeholder="filename.md"
+            placeholder="folder/filename.md"
             className="w-full bg-gray-800 text-gray-100 text-sm px-2 py-1 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
             autoFocus
           />
@@ -220,61 +337,7 @@ export default function Sidebar({
         {!isLoading && files.length === 0 && (
           <div className="px-4 py-3 text-sm text-gray-500">No files yet</div>
         )}
-        {files.map((file) => (
-          <div
-            key={file.name}
-            className={`group flex items-center px-3 py-2 cursor-pointer hover:bg-gray-800 transition-colors ${
-              selectedFile === file.name ? 'bg-gray-800 border-l-2 border-blue-500' : 'border-l-2 border-transparent'
-            }`}
-          >
-            {renamingFile === file.name ? (
-              <input
-                type="text"
-                value={renameValue}
-                onChange={(e) => setRenameValue(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleRename(file.name);
-                  if (e.key === 'Escape') setRenamingFile(null);
-                }}
-                onBlur={() => handleRename(file.name)}
-                className="flex-1 bg-gray-700 text-gray-100 text-sm px-1 py-0.5 rounded border border-gray-500 focus:outline-none focus:border-blue-500"
-                autoFocus
-              />
-            ) : (
-              <>
-                <span
-                  className="flex-1 text-sm truncate"
-                  onClick={() => onFileSelect(file.name)}
-                  title={file.name}
-                >
-                  {file.name}
-                </span>
-                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                  <button
-                    onClick={(e) => { e.stopPropagation(); startRename(file); }}
-                    className="text-gray-400 hover:text-white p-0.5"
-                    title="Rename"
-                    aria-label={`Rename ${file.name}`}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                    </svg>
-                  </button>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleDelete(file); }}
-                    className="text-gray-400 hover:text-red-400 p-0.5"
-                    title="Delete"
-                    aria-label={`Delete ${file.name}`}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                    </svg>
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        ))}
+        {!isLoading && renderTree(tree)}
       </div>
     </aside>
   );

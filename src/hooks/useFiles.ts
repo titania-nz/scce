@@ -2,6 +2,7 @@
 
 import useSWR from 'swr';
 import { FileEntry, FileListResponse } from '@/types';
+import { getFileApiPath } from '@/lib/apiPath';
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -24,7 +25,7 @@ export function useFiles() {
   }
 
   async function deleteFile(filename: string): Promise<void> {
-    const res = await fetch(`/api/files/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+    const res = await fetch(getFileApiPath(filename), { method: 'DELETE' });
     if (!res.ok) {
       const err = await res.json();
       throw new Error(err.error ?? 'Could not delete file');
@@ -33,7 +34,7 @@ export function useFiles() {
   }
 
   async function renameFile(oldName: string, newName: string): Promise<void> {
-    const res = await fetch(`/api/files/${encodeURIComponent(oldName)}`, {
+    const res = await fetch(getFileApiPath(oldName), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ newName }),
