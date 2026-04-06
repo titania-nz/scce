@@ -32,7 +32,7 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   try {
     const body = await request.json();
-    const { content, notes = [], documentName } = body;
+    const { content, notes = [], documentName, collaboration } = body;
 
     if (typeof content !== 'string') {
       return NextResponse.json({ error: 'Invalid content' }, { status: 400 });
@@ -60,6 +60,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     const revision = await appendImmutableRevision(documentId, {
       content,
       notes: Array.isArray(notes) ? notes : [],
+      collaboration: typeof collaboration === 'object' && collaboration ? collaboration : undefined,
     });
 
     return NextResponse.json({ revision }, { status: 201 });
