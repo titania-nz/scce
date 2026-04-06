@@ -50,6 +50,10 @@ function generateSessionId(): string {
   return crypto.randomUUID().replace(/-/g, '');
 }
 
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
 export async function createAuthToken(secret: string, ttlSeconds = DEFAULT_TTL_SECONDS): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   const payload: AuthTokenPayload = {
@@ -84,7 +88,12 @@ export async function verifyAuthToken(token: string, secret: string): Promise<bo
   }
 
   const key = await importSigningKey(secret);
-  const isSignatureValid = await crypto.subtle.verify('HMAC', key, signatureBytes, new TextEncoder().encode(payloadEncoded));
+  const isSignatureValid = await crypto.subtle.verify(
+    'HMAC',
+    key,
+    toArrayBuffer(signatureBytes),
+    new TextEncoder().encode(payloadEncoded),
+  );
 
   if (!isSignatureValid) {
     return false;
