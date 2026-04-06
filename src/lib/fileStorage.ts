@@ -156,8 +156,8 @@ export async function fileExists(filename: string): Promise<boolean> {
       const store = getBlobStore();
       if (!store) return false;
       try {
-        await store.get(key);
-        return true;
+        const blob = await store.get(key);
+        return blob !== null;
       } catch {
         return false;
       }
