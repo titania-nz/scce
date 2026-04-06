@@ -31,7 +31,6 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
   const [mergeNote, setMergeNote] = useState('');
   const [mergeTagsInput, setMergeTagsInput] = useState('');
   const [mergeStatus, setMergeStatus] = useState<RevisionStatus | ''>('');
-  const [targetFilename, setTargetFilename] = useState('');
   const [mergedContent, setMergedContent] = useState('');
   const [autoMergedContent, setAutoMergedContent] = useState('');
   const [mergedDirty, setMergedDirty] = useState(false);
@@ -90,59 +89,12 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
     || (destination === 'overwrite-a' && !selectedA)
     || (destination === 'overwrite-b' && !selectedB);
 
-  async function handleFinalize(): Promise<void> {
-    if (!selectedA || !selectedB || !targetFilename) return;
-    setIsFinalizing(true);
-    setSaveError(null);
-    setSaveSuccess(null);
-
-    const timestamp = new Date().toISOString();
-    const note = (mergeNote.trim() || `Merged from A/B compare on ${timestamp}`);
-    const metadata = {
-      note,
-      tags: parsedMergeTags,
-      status: mergeStatus || undefined,
-    };
-
-    try {
-      if (destination === 'overwrite-a') {
-        await saveA(effectiveContentB, metadata);
-      } else if (destination === 'overwrite-b') {
-        await saveB(effectiveContentA, metadata);
-      } else {
-        const response = await fetch(buildFileApiPath(targetFilename), {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            content: effectiveContentB,
-            ...metadata,
-          }),
-        });
-        if (!response.ok) {
-          const err = await response.json();
-          throw new Error(err.error ?? 'Could not save merged file');
-        }
-      }
-
-      await mutateFiles();
-      setSaveSuccess(`Merge saved to ${targetFilename}.`);
-    } catch (error) {
-      setSaveError(error instanceof Error ? error.message : 'Could not finalize merge');
-    } finally {
-      setIsFinalizing(false);
-    }
-  }
-
   useEffect(() => {
     setMergedDirty(false);
     setMergedContent('');
     setAutoMergedContent('');
     setUnresolvedHunks(0);
   }, [selectedA, selectedB, revisionA, revisionB]);
-
-  useEffect(() => {
-    setTargetFilename(selectedA ?? '');
-  }, [selectedA]);
 
   useEffect(() => {
     if (!mergedDirty) {
