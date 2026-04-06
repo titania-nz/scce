@@ -119,7 +119,7 @@ export default function DiffView({
               className="px-2 py-0.5 rounded text-gray-300 hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed"
               title="Previous change"
             >
-              ↑ Prev
+              Previous
             </button>
             <span className="text-gray-500 tabular-nums">
               {activeIdx + 1} / {hunks.length}
@@ -130,7 +130,7 @@ export default function DiffView({
               className="px-2 py-0.5 rounded text-gray-300 hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed"
               title="Next change"
             >
-              Next ↓
+              Next
             </button>
           </div>
         )}

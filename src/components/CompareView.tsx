@@ -38,8 +38,8 @@ export default function CompareView({ selectedFile = null, onFileSelect }: Compa
   const effectiveContentA = selectedRevisionA?.content ?? contentA;
   const effectiveContentB = selectedRevisionB?.content ?? contentB;
 
-  const headerA = selectedRevisionA?.note ? `${selectedA} — ${selectedRevisionA.note}` : selectedA ?? '';
-  const headerB = selectedRevisionB?.note ? `${selectedB} — ${selectedRevisionB.note}` : selectedB ?? '';
+  const headerA = selectedRevisionA?.note ? `${selectedA} - ${selectedRevisionA.note}` : selectedA ?? '';
+  const headerB = selectedRevisionB?.note ? `${selectedB} - ${selectedRevisionB.note}` : selectedB ?? '';
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -56,7 +56,7 @@ export default function CompareView({ selectedFile = null, onFileSelect }: Compa
             }}
             className={selectClass}
           >
-            <option value="">Select a file…</option>
+            <option value="">Select a file...</option>
             {files.map((f) => (
               <option key={f.name} value={f.name}>{f.name}</option>
             ))}
@@ -70,7 +70,7 @@ export default function CompareView({ selectedFile = null, onFileSelect }: Compa
             <option value="latest">Latest</option>
             {[...revisionsA].reverse().map((revision) => (
               <option key={revision.id} value={revision.id}>
-                {new Date(revision.createdAt).toLocaleDateString()} {revision.note ? `— ${revision.note}` : ''}
+                {new Date(revision.createdAt).toLocaleDateString()} {revision.note ? `- ${revision.note}` : ''}
               </option>
             ))}
           </select>
@@ -88,7 +88,7 @@ export default function CompareView({ selectedFile = null, onFileSelect }: Compa
             }}
             className={selectClass}
           >
-            <option value="">Select a file…</option>
+            <option value="">Select a file...</option>
             {files.map((f) => (
               <option key={f.name} value={f.name}>{f.name}</option>
             ))}
@@ -102,7 +102,7 @@ export default function CompareView({ selectedFile = null, onFileSelect }: Compa
             <option value="latest">Latest</option>
             {[...revisionsB].reverse().map((revision) => (
               <option key={revision.id} value={revision.id}>
-                {new Date(revision.createdAt).toLocaleDateString()} {revision.note ? `— ${revision.note}` : ''}
+                {new Date(revision.createdAt).toLocaleDateString()} {revision.note ? `- ${revision.note}` : ''}
               </option>
             ))}
           </select>
@@ -115,7 +115,7 @@ export default function CompareView({ selectedFile = null, onFileSelect }: Compa
         </div>
       ) : isLoading ? (
         <div className="flex-1 flex items-center justify-center text-gray-500 text-sm">
-          Loading…
+          Loading...
         </div>
       ) : (
         <DiffView

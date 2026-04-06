@@ -37,7 +37,7 @@ export default function Toolbar({
 }: ToolbarProps) {
   return (
     <div className="flex items-center gap-2 px-3 h-12 bg-gray-800 border-b border-gray-700 shrink-0">
-      {/* Hamburger — visible on mobile only */}
+      {/* Hamburger - visible on mobile only */}
       <button
         onClick={onToggleSidebar}
         className="md:hidden text-gray-400 hover:text-white p-1 rounded transition-colors"
@@ -64,7 +64,7 @@ export default function Toolbar({
           <span className="text-gray-500">No file selected</span>
         )}
         {isSaving && (
-          <span className="ml-2 text-xs text-gray-400">Saving draft…</span>
+          <span className="ml-2 text-xs text-gray-400">Saving draft...</span>
         )}
       </span>
 
