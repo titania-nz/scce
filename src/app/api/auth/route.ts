@@ -23,6 +23,22 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Server not configured' }, { status: 503 });
   }
 
+  const throttleStatus = await getAuthThrottleStatus(request);
+  if (throttleStatus.blocked) {
+    return NextResponse.json(
+      {
+        error: GENERIC_AUTH_ERROR,
+        retryAfterSeconds: throttleStatus.retryAfterSeconds,
+      },
+      {
+        status: 429,
+        headers: {
+          'Retry-After': String(throttleStatus.retryAfterSeconds),
+        },
+      },
+    );
+  }
+
   if (!password || password !== authPassword) {
     recordAuthFailure(request);
     return NextResponse.json({ error: 'Incorrect password' }, { status: 401 });

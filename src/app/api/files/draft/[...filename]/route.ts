@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { promoteRevisionToDraft } from '@/lib/fileStorage';
+import { writeFile } from '@/lib/fileStorage';
+import { readRevisions } from '@/lib/revisionStorage';
 import { parseFilename } from '@/lib/parseFilename';
 
 type Params = { params: Promise<{ filename: string[] }> };
@@ -16,7 +17,12 @@ export async function POST(request: NextRequest, { params }: Params) {
       return NextResponse.json({ error: 'Invalid revisionId' }, { status: 400 });
     }
 
-    await promoteRevisionToDraft(filename, revisionId);
+    const revisions = await readRevisions(filename);
+    const revision = revisions.find((candidate) => candidate.id === revisionId);
+    if (!revision) {
+      return NextResponse.json({ error: 'Revision not found' }, { status: 404 });
+    }
+    await writeFile(filename, revision.content);
     return NextResponse.json({ name: filename, currentDraftRevisionId: revisionId });
   } catch (err: unknown) {
     const e = err as { status?: number; message?: string };
