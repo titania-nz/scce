@@ -14,7 +14,7 @@ interface DiffViewProps {
   onAction?: () => void | Promise<void>;
 }
 
-function DiffLineRow({ line }: { line: DiffLine }) {
+function DiffLineRow({ line }: { line: DiffLine; key?: string | number }) {
   const lineNumClass = 'w-10 shrink-0 text-right select-none text-gray-600 tabular-nums';
 
   let rowClass = 'flex font-mono text-xs leading-5';
@@ -51,6 +51,7 @@ function HunkBlock({
   total: number;
   isActive: boolean;
   hunkRef: (el: HTMLDivElement | null) => void;
+  key?: string | number;
 }) {
   return (
     <div ref={hunkRef}>
