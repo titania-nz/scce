@@ -8,6 +8,10 @@ interface DiffViewProps {
   contentB: string;
   filenameA: string;
   filenameB: string;
+  actionLabel?: string;
+  actionHint?: string;
+  actionDisabled?: boolean;
+  onAction?: () => void | Promise<void>;
 }
 
 function DiffLineRow({ line }: { line: DiffLine }) {
@@ -64,7 +68,16 @@ function HunkBlock({
   );
 }
 
-export default function DiffView({ contentA, contentB, filenameA, filenameB }: DiffViewProps) {
+export default function DiffView({
+  contentA,
+  contentB,
+  filenameA,
+  filenameB,
+  actionLabel,
+  actionHint,
+  actionDisabled = false,
+  onAction,
+}: DiffViewProps) {
   const diff = useMemo(() => computeDiff(contentA, contentB), [contentA, contentB]);
   const [activeIdx, setActiveIdx] = useState(0);
   const hunkRefs = useRef<Map<number, HTMLDivElement>>(new Map());
@@ -124,6 +137,17 @@ export default function DiffView({ contentA, contentB, filenameA, filenameB }: D
               Next ↓
             </button>
           </div>
+        )}
+
+        {actionLabel && onAction && (
+          <button
+            onClick={onAction}
+            disabled={actionDisabled}
+            title={actionHint}
+            className="px-2 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            {actionLabel}
+          </button>
         )}
       </div>
 
