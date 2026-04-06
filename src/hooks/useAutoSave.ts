@@ -8,7 +8,11 @@ interface UseAutoSaveOptions {
   filename: string | null;
   isDirty: boolean;
   saveWorkingCopyFn: (content: string) => Promise<void>;
-  saveCheckpointFn: (content: string) => Promise<void>;
+  /**
+   * @deprecated Use saveCheckpointFn instead.
+   */
+  saveFn?: (content: string) => Promise<void>;
+  saveCheckpointFn?: (content: string) => Promise<void>;
   debounceMs?: number;
 }
 
@@ -18,6 +22,7 @@ export function useAutoSave({
   filename,
   isDirty,
   saveWorkingCopyFn,
+  saveFn,
   saveCheckpointFn,
   debounceMs = 1500,
 }: UseAutoSaveOptions) {
@@ -26,11 +31,11 @@ export function useAutoSave({
   const [debouncedContent] = useDebounce(content, debounceMs);
   const isDirtyRef = useRef(isDirty);
   const saveWorkingCopyFnRef = useRef(saveWorkingCopyFn);
-  const saveCheckpointFnRef = useRef(saveCheckpointFn);
+  const saveCheckpointFnRef = useRef(saveFn ?? saveCheckpointFn);
 
   isDirtyRef.current = isDirty;
   saveWorkingCopyFnRef.current = saveWorkingCopyFn;
-  saveCheckpointFnRef.current = saveCheckpointFn;
+  saveCheckpointFnRef.current = saveFn ?? saveCheckpointFn;
 
   // Debounced auto-save to working copy buffer.
   useEffect(() => {
@@ -59,7 +64,11 @@ export function useAutoSave({
     setIsSaving(true);
     setSaveError(null);
     try {
-      await saveCheckpointFnRef.current(currentContent);
+      const checkpointSave = saveCheckpointFnRef.current;
+      if (!checkpointSave) {
+        throw new Error('No checkpoint save callback provided');
+      }
+      await checkpointSave(currentContent);
     } catch (err: unknown) {
       const e = err as { message?: string };
       setSaveError(e.message ?? 'Checkpoint save failed');
