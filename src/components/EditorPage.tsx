@@ -9,8 +9,9 @@ import CompareView from './CompareView';
 import DiffView from './DiffView';
 import { useFileContent } from '@/hooks/useFileContent';
 import { useAutoSave } from '@/hooks/useAutoSave';
-import { buildFileExportApiPath, buildFilePublishApiPath } from '@/lib/fileApiPath';
-import { PublishHistoryEntry, PublishTargetProfile, RevisionStatus, Revision } from '@/types';
+import { useFiles } from '@/hooks/useFiles';
+import { buildFileExportApiPath, buildFilePublishApiPath, buildFileApiPath } from '@/lib/fileApiPath';
+import { PublishHistoryEntry, PublishTargetProfile, RevisionStatus, Revision, RevisionInlineNote } from '@/types';
 
 // CodeMirror accesses browser APIs — must be dynamically imported with ssr:false
 const EditorPane = dynamic(() => import('./EditorPane'), { ssr: false });
@@ -106,6 +107,10 @@ export default function EditorPage() {
   const [latestRevisionStatus, setLatestRevisionStatus] = useState<RevisionStatus | ''>('');
   const [isPublishing, setIsPublishing] = useState(false);
   const [publishMessage, setPublishMessage] = useState<string>('');
+  const [activeRevisionId, setActiveRevisionId] = useState<string | null>(null);
+  const [selectedRevisionIds, setSelectedRevisionIds] = useState<string[]>([]);
+  const [timelineError, setTimelineError] = useState<string | null>(null);
+  const [inlineNoteMessage, setInlineNoteMessage] = useState('');
 
   const { content: loadedContent, revisions, isLoading, saveContent, updateRevisionInlineNotes } = useFileContent(selectedFile);
   const prevFileRef = useRef<string | null>(null);
