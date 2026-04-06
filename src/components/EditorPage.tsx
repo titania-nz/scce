@@ -8,6 +8,8 @@ import Toolbar from './Toolbar';
 import CompareView from './CompareView';
 import { useFileContent } from '@/hooks/useFileContent';
 import { useAutoSave } from '@/hooks/useAutoSave';
+import { useFiles } from '@/hooks/useFiles';
+import { buildFileApiPath } from '@/lib/fileApiPath';
 import { RevisionStatus } from '@/types';
 
 // CodeMirror accesses browser APIs — must be dynamically imported with ssr:false
@@ -19,8 +21,81 @@ const STATUS_OPTIONS: Array<{ value: RevisionStatus; label: string }> = [
   { value: 'needs-review', label: 'Needs review' },
 ];
 
+interface CommandItem {
+  id: string;
+  title: string;
+  keywords?: string[];
+  run: () => void | Promise<void>;
+}
+
+type ShortcutMap = Record<string, string>;
+
+const DEFAULT_SHORTCUTS: ShortcutMap = {
+  saveCheckpoint: 'Mod+S',
+  commandPalette: 'Mod+K',
+  createFile: 'Mod+N',
+  openFilePalette: 'Mod+O',
+  renameFile: 'Shift+Mod+R',
+  createDailyNote: 'Shift+Mod+D',
+};
+
+const SHORTCUT_STORAGE_KEY = 'editor-shortcuts-v1';
+const SHORTCUT_LABELS: Record<string, string> = {
+  saveCheckpoint: 'Save checkpoint',
+  commandPalette: 'Open command palette',
+  createFile: 'Create file',
+  openFilePalette: 'Find file',
+  renameFile: 'Rename current file',
+  createDailyNote: 'Create daily note',
+};
+
+const TEMPLATE_SNIPPETS: Array<{ id: string; title: string; content: (date: string) => string }> = [
+  {
+    id: 'meeting-notes',
+    title: 'Meeting notes',
+    content: (date) => `# Meeting Notes\n\n- Date: ${date}\n- Attendees:\n- Topic:\n\n## Agenda\n- \n\n## Notes\n- \n\n## Action Items\n- [ ] `,
+  },
+  {
+    id: 'rfc',
+    title: 'RFC',
+    content: (date) => `# RFC: \n\n- Status: Draft\n- Owner:\n- Date: ${date}\n\n## Context\n\n## Proposal\n\n## Alternatives\n\n## Risks\n\n## Rollout plan`,
+  },
+  {
+    id: 'changelog',
+    title: 'Changelog',
+    content: (date) => `# Changelog (${date})\n\n## Added\n- \n\n## Changed\n- \n\n## Fixed\n- `,
+  },
+];
+
+function toDateStamp(date = new Date()): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function parseShortcut(shortcut: string): { key: string; shift: boolean; alt: boolean; mod: boolean } | null {
+  const parts = shortcut.split('+').map((part) => part.trim()).filter(Boolean);
+  if (parts.length === 0) return null;
+  const key = parts[parts.length - 1].toLowerCase();
+  return {
+    key,
+    shift: parts.some((part) => part.toLowerCase() === 'shift'),
+    alt: parts.some((part) => part.toLowerCase() === 'alt'),
+    mod: parts.some((part) => part.toLowerCase() === 'mod'),
+  };
+}
+
+function eventToShortcut(event: KeyboardEvent): string {
+  const key = event.key.length === 1 ? event.key.toUpperCase() : event.key;
+  const parts: string[] = [];
+  if (event.shiftKey) parts.push('Shift');
+  if (event.altKey) parts.push('Alt');
+  if (event.metaKey || event.ctrlKey) parts.push('Mod');
+  parts.push(key);
+  return parts.join('+');
+}
+
 // Main component export: this is the entry point rendered by parent routes/components.
 export default function EditorPage() {
+  const { files, createFile, renameFile } = useFiles();
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [content, setContent] = useState('');
   const [isDirty, setIsDirty] = useState(false);
@@ -32,6 +107,13 @@ export default function EditorPage() {
   const [status, setStatus] = useState<RevisionStatus | ''>('');
   const [workingDraftByFile, setWorkingDraftByFile] = useState<Record<string, string>>({});
   const [lastCheckpointAtByFile, setLastCheckpointAtByFile] = useState<Record<string, string>>({});
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [commandQuery, setCommandQuery] = useState('');
+  const [shortcutEditorOpen, setShortcutEditorOpen] = useState(false);
+  const [shortcuts, setShortcuts] = useState<ShortcutMap>(DEFAULT_SHORTCUTS);
+  const [capturingShortcutFor, setCapturingShortcutFor] = useState<string | null>(null);
+  const [backlinks, setBacklinks] = useState<string[]>([]);
+  const commandInputRef = useRef<HTMLInputElement>(null);
 
   const { content: loadedContent, revisions, isLoading, saveContent } = useFileContent(selectedFile);
   const prevFileRef = useRef<string | null>(null);
@@ -40,6 +122,26 @@ export default function EditorPage() {
     () => tagsInput.split(',').map((tag) => tag.trim()).filter(Boolean),
     [tagsInput],
   );
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(SHORTCUT_STORAGE_KEY);
+      if (!stored) return;
+      const parsed = JSON.parse(stored) as ShortcutMap;
+      setShortcuts((prev) => ({ ...prev, ...parsed }));
+    } catch {
+      // ignore malformed local settings
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(SHORTCUT_STORAGE_KEY, JSON.stringify(shortcuts));
+  }, [shortcuts]);
+
+  useEffect(() => {
+    if (!commandPaletteOpen) return;
+    commandInputRef.current?.focus();
+  }, [commandPaletteOpen]);
 
   const saveWorkingCopy = useCallback(async (draftContent: string) => {
     if (!selectedFile) return;
@@ -113,6 +215,91 @@ export default function EditorPage() {
     },
   });
 
+  const createNewFile = useCallback(async () => {
+    const rawName = window.prompt('New file name', 'untitled');
+    if (!rawName) return;
+    const nextName = rawName.endsWith('.md') ? rawName : `${rawName}.md`;
+    await createFile(nextName, '');
+    setSelectedFile(nextName);
+    setCommandPaletteOpen(false);
+  }, [createFile]);
+
+  const renameCurrentFile = useCallback(async () => {
+    if (!selectedFile) return;
+    const currentStem = selectedFile.replace(/\.md$/, '');
+    const rawName = window.prompt('Rename file to', currentStem);
+    if (!rawName) return;
+    const nextName = rawName.endsWith('.md') ? rawName : `${rawName}.md`;
+    await renameFile(selectedFile, nextName);
+    handleFileRenamed(selectedFile, nextName);
+    setCommandPaletteOpen(false);
+  }, [renameFile, selectedFile]);
+
+  const applyTemplate = useCallback((templateId: string) => {
+    const template = TEMPLATE_SNIPPETS.find((item) => item.id === templateId);
+    if (!template) return;
+    setContent(template.content(toDateStamp()));
+    setIsDirty(true);
+    setCommandPaletteOpen(false);
+  }, []);
+
+  const createDailyNote = useCallback(async () => {
+    const today = toDateStamp();
+    const yesterday = toDateStamp(new Date(Date.now() - 24 * 60 * 60 * 1000));
+    const tomorrow = toDateStamp(new Date(Date.now() + 24 * 60 * 60 * 1000));
+    const filename = `daily/${today}.md`;
+    const dailyTemplate = `# Daily note — ${today}\n\nPrev: [[daily/${yesterday}]]\nNext: [[daily/${tomorrow}]]\n\n## Priorities\n- \n\n## Journal\n- \n`;
+    await createFile(filename, dailyTemplate);
+    setSelectedFile(filename);
+    setCommandPaletteOpen(false);
+  }, [createFile]);
+
+  const openFilePickerFromCommand = useCallback(() => {
+    setCommandQuery('open ');
+    setCommandPaletteOpen(true);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function computeBacklinks() {
+      if (!selectedFile || files.length === 0) {
+        setBacklinks([]);
+        return;
+      }
+
+      const exactLink = `[[${selectedFile}]]`;
+      const noExtLink = `[[${selectedFile.replace(/\.md$/, '')}]]`;
+      const found: string[] = [];
+
+      await Promise.all(
+        files.map(async (file) => {
+          if (file.name === selectedFile) return;
+          try {
+            const res = await fetch(buildFileApiPath(file.name));
+            if (!res.ok) return;
+            const payload = (await res.json()) as { content?: string };
+            const text = payload.content ?? '';
+            if (text.includes(exactLink) || text.includes(noExtLink)) {
+              found.push(file.name);
+            }
+          } catch {
+            // ignore failed backlink fetch
+          }
+        }),
+      );
+
+      if (!cancelled) {
+        found.sort((a, b) => a.localeCompare(b));
+        setBacklinks(found);
+      }
+    }
+
+    void computeBacklinks();
+    return () => {
+      cancelled = true;
+    };
+  }, [files, selectedFile]);
+
   function handleContentChange(val: string) {
     setContent(val);
     setIsDirty(true);
@@ -127,17 +314,61 @@ export default function EditorPage() {
     await saveWorkingCopy(content);
   }, [content, saveWorkingCopy]);
 
-  // Ctrl+S to save checkpoint revision
+  // Keyboard shortcuts
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+      if (capturingShortcutFor) {
         e.preventDefault();
-        if (!isSaving) handleSaveCheckpoint();
+        if (e.key === 'Escape') {
+          setCapturingShortcutFor(null);
+          return;
+        }
+        const nextShortcut = eventToShortcut(e);
+        setShortcuts((prev) => ({ ...prev, [capturingShortcutFor]: nextShortcut }));
+        setCapturingShortcutFor(null);
+        return;
       }
+
+      if (e.key === 'Escape' && commandPaletteOpen) {
+        setCommandPaletteOpen(false);
+        return;
+      }
+
+      const entries = Object.entries(shortcuts);
+      const matched = entries.find(([, shortcut]) => {
+        const parsed = parseShortcut(shortcut);
+        if (!parsed) return false;
+        const keyMatches = e.key.toLowerCase() === parsed.key.toLowerCase();
+        const modMatches = parsed.mod ? (e.metaKey || e.ctrlKey) : !(e.metaKey || e.ctrlKey);
+        return keyMatches
+          && modMatches
+          && e.shiftKey === parsed.shift
+          && e.altKey === parsed.alt;
+      });
+      if (!matched) return;
+
+      const [action] = matched;
+      e.preventDefault();
+      if (action === 'saveCheckpoint' && !isSaving) handleSaveCheckpoint();
+      if (action === 'commandPalette') setCommandPaletteOpen(true);
+      if (action === 'createFile') void createNewFile();
+      if (action === 'openFilePalette') openFilePickerFromCommand();
+      if (action === 'renameFile') void renameCurrentFile();
+      if (action === 'createDailyNote') void createDailyNote();
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [handleSaveCheckpoint, isSaving]);
+  }, [
+    capturingShortcutFor,
+    commandPaletteOpen,
+    createDailyNote,
+    createNewFile,
+    handleSaveCheckpoint,
+    isSaving,
+    openFilePickerFromCommand,
+    renameCurrentFile,
+    shortcuts,
+  ]);
 
   async function handleFileSelect(filename: string) {
     // Persist current edits to local working-draft buffer before switching files.
@@ -195,6 +426,90 @@ export default function EditorPage() {
   }
 
   const lastCheckpointAt = selectedFile ? lastCheckpointAtByFile[selectedFile] ?? null : null;
+  const normalizedQuery = commandQuery.trim().toLowerCase();
+  const openPrefix = normalizedQuery.startsWith('open ');
+  const openTerm = openPrefix ? normalizedQuery.slice(5).trim() : '';
+  const fileMatches = files
+    .filter((file) => {
+      if (!openPrefix) return true;
+      return file.name.toLowerCase().includes(openTerm);
+    })
+    .slice(0, 10);
+
+  const commandItems = useMemo<CommandItem[]>(() => {
+    const base: CommandItem[] = [
+      {
+        id: 'save',
+        title: 'Save checkpoint',
+        keywords: ['save'],
+        run: () => handleSaveCheckpoint(),
+      },
+      {
+        id: 'create',
+        title: 'Create file',
+        keywords: ['new'],
+        run: () => createNewFile(),
+      },
+      {
+        id: 'rename',
+        title: 'Rename current file',
+        keywords: ['rename'],
+        run: () => renameCurrentFile(),
+      },
+      {
+        id: 'daily-note',
+        title: 'Create daily note',
+        keywords: ['journal', 'today'],
+        run: () => createDailyNote(),
+      },
+      {
+        id: 'shortcuts',
+        title: 'Customize keyboard shortcuts',
+        keywords: ['hotkeys', 'keys'],
+        run: () => {
+          setShortcutEditorOpen(true);
+          setCommandPaletteOpen(false);
+        },
+      },
+    ];
+
+    TEMPLATE_SNIPPETS.forEach((template) => {
+      base.push({
+        id: `template-${template.id}`,
+        title: `Insert template: ${template.title}`,
+        keywords: ['template', 'snippet'],
+        run: () => applyTemplate(template.id),
+      });
+    });
+
+    fileMatches.forEach((file) => {
+      base.push({
+        id: `open-${file.name}`,
+        title: `Open: ${file.name}`,
+        keywords: ['open', 'file'],
+        run: () => {
+          void handleFileSelect(file.name);
+          setCommandPaletteOpen(false);
+          setCommandQuery('');
+        },
+      });
+    });
+
+    if (!normalizedQuery) return base;
+    return base.filter((command) => {
+      const haystack = [command.title, ...(command.keywords ?? [])].join(' ').toLowerCase();
+      return haystack.includes(normalizedQuery);
+    });
+  }, [
+    applyTemplate,
+    createDailyNote,
+    createNewFile,
+    fileMatches,
+    handleFileSelect,
+    handleSaveCheckpoint,
+    normalizedQuery,
+    renameCurrentFile,
+  ]);
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-950 text-gray-100">
@@ -342,11 +657,96 @@ export default function EditorPage() {
                     </button>
                   ))
                 )}
+
+                <div className="mt-4 border-t border-gray-700 pt-3 space-y-2">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Backlinks</h3>
+                  {selectedFile ? (
+                    backlinks.length === 0 ? (
+                      <p className="text-xs text-gray-500">No backlinks yet. Add references like [[{selectedFile.replace(/\.md$/, '')}]].</p>
+                    ) : (
+                      backlinks.map((file) => (
+                        <button
+                          key={file}
+                          onClick={() => void handleFileSelect(file)}
+                          className="w-full text-left text-xs px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-200"
+                        >
+                          {file}
+                        </button>
+                      ))
+                    )
+                  ) : (
+                    <p className="text-xs text-gray-500">Select a file to see backlinks.</p>
+                  )}
+                </div>
               </div>
             </aside>
           </div>
         )}
       </div>
+
+      {commandPaletteOpen && (
+        <div className="fixed inset-0 z-40 bg-black/60 flex items-start justify-center pt-24 px-4">
+          <div className="w-full max-w-2xl bg-gray-900 border border-gray-700 rounded-lg shadow-xl overflow-hidden">
+            <input
+              ref={commandInputRef}
+              value={commandQuery}
+              onChange={(e) => setCommandQuery(e.target.value)}
+              placeholder="Type a command... (try `open foo`)"
+              className="w-full bg-gray-900 px-4 py-3 text-sm border-b border-gray-700 outline-none"
+            />
+            <div className="max-h-80 overflow-y-auto p-2 space-y-1">
+              {commandItems.length === 0 ? (
+                <p className="text-xs text-gray-500 px-2 py-3">No matching commands.</p>
+              ) : (
+                commandItems.map((command) => (
+                  <button
+                    key={command.id}
+                    onClick={() => void command.run()}
+                    className="w-full text-left text-sm px-3 py-2 rounded hover:bg-gray-800 text-gray-100"
+                  >
+                    {command.title}
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {shortcutEditorOpen && (
+        <div className="fixed inset-0 z-40 bg-black/70 flex items-center justify-center p-4">
+          <div className="w-full max-w-xl bg-gray-900 border border-gray-700 rounded-lg p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-gray-100">Keyboard shortcuts</h3>
+              <button
+                onClick={() => setShortcutEditorOpen(false)}
+                className="text-xs px-2 py-1 rounded bg-gray-800 hover:bg-gray-700"
+              >
+                Close
+              </button>
+            </div>
+            <div className="space-y-2">
+              {Object.entries(SHORTCUT_LABELS).map(([key, label]) => (
+                <div key={key} className="flex items-center justify-between gap-3 bg-gray-800/60 rounded px-3 py-2">
+                  <span className="text-xs text-gray-200">{label}</span>
+                  <button
+                    onClick={() => setCapturingShortcutFor(key)}
+                    className="text-xs font-mono px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 min-w-28"
+                  >
+                    {capturingShortcutFor === key ? 'Press keys...' : shortcuts[key]}
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={() => setShortcuts(DEFAULT_SHORTCUTS)}
+              className="mt-3 text-xs px-2 py-1 rounded bg-gray-800 hover:bg-gray-700"
+            >
+              Reset defaults
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
