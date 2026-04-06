@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { addRevisionComment, listRevisionComments } from '@/lib/fileStorage';
+import { addRevisionComment, listRevisionComments } from '@/lib/documentStorage';
 
 type Params = { params: Promise<{ documentId: string; revisionId: string }> };
 

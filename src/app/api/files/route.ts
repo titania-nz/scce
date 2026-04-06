@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { listFiles } from '@/lib/fileStorage';
+import { listNoteFiles } from '@/lib/noteIndexStorage';
 import { noteFileExists, readNoteFile, writeNoteFile } from '@/lib/noteContentStorage';
 import { readRevisions } from '@/lib/revisionStorage';
 import { parseMetaFromContent, summarizeRevisionMeta } from '@/lib/revisionMeta';
@@ -7,7 +7,7 @@ import { parseMetaFromContent, summarizeRevisionMeta } from '@/lib/revisionMeta'
 // API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function GET(request: NextRequest) {
   try {
-    const files = await listFiles();
+    const files = await listNoteFiles();
     const includeMeta = request.nextUrl.searchParams.get('includeMeta');
     if (includeMeta !== '1' && includeMeta !== 'true') {
       return NextResponse.json({ files });

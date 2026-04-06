@@ -1,7 +1,7 @@
 'use server';
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getRevision, mutateRevisionCollaboration } from '@/lib/fileStorage';
+import { getRevision, mutateRevisionCollaboration } from '@/lib/documentStorage';
 
 type Params = { params: Promise<{ documentId: string; revisionId: string }> };
 

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { promoteDocumentBranch } from '@/lib/fileStorage';
+import { promoteDocumentBranch } from '@/lib/documentStorage';
 import { DocumentBranchName } from '@/types';
 
 type Params = { params: Promise<{ documentId: string; revisionId: string }> };

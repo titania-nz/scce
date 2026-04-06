@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDocumentBranchState, updateDocumentBranchState } from '@/lib/fileStorage';
+import { getDocumentBranchState, updateDocumentBranchState } from '@/lib/documentStorage';
 
 type Params = { params: Promise<{ documentId: string }> };
 

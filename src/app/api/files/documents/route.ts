@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { listDocumentDashboardEntries } from '@/lib/fileStorage';
+import { listDocumentDashboardEntries } from '@/lib/documentStorage';
 
 // API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function GET() {

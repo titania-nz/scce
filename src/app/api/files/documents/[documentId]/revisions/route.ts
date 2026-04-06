@@ -3,7 +3,7 @@ import {
   appendImmutableRevision,
   createDocumentRootRecord,
   listRevisionsByDocumentId,
-} from '@/lib/fileStorage';
+} from '@/lib/documentStorage';
 
 type Params = { params: Promise<{ documentId: string }> };
 
