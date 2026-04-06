@@ -3,6 +3,8 @@ import { listRevisions } from '@/lib/fileStorage';
 import { parseFilename } from '@/lib/parseFilename';
 
 type Params = { params: Promise<{ filename: string[] }> };
+// Keep revision listing on the document-aware storage helper so this route exposes
+// both revision items and `currentDraftRevisionId` in one call.
 
 // API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function GET(_request: Request, { params }: Params) {
