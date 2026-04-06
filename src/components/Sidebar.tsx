@@ -47,6 +47,32 @@ interface DocumentGroup {
   chapters: ChapterGroup[];
 }
 
+interface HeadingItem {
+  level: number;
+  text: string;
+}
+
+interface SearchEntry {
+  id: string;
+  sourceType: 'current' | 'revision';
+  file: FileEntry;
+  document: string;
+  chapter: string;
+  revisionLabel: string;
+  createdAt: Date;
+  createdAtIso: string;
+  tags: string[];
+  status: string;
+  note: string;
+  content: string;
+}
+
+interface SearchResult {
+  entry: SearchEntry;
+  score: number;
+  snippet: string;
+}
+
 interface ImportCandidate {
   originalPath: string;
   name: string;
@@ -217,83 +243,6 @@ async function extractMarkdownFromZip(buffer: ArrayBuffer): Promise<Array<{ name
 }
 
 // Helper function: keeps a small, testable transformation isolated from UI side effects.
-function splitFrontmatter(content: string): { frontmatter: string; body: string } {
-  if (!content.startsWith('---\n')) {
-    return { frontmatter: '', body: content };
-  }
-
-  const endMarkerIndex = content.indexOf('\n---\n', 4);
-  if (endMarkerIndex === -1) {
-    return { frontmatter: '', body: content };
-  }
-
-  return {
-    frontmatter: content.slice(4, endMarkerIndex),
-    body: content.slice(endMarkerIndex + 5),
-  };
-}
-
-// Helper function: keeps a small, testable transformation isolated from UI side effects.
-function parseMetaFromContent(content: string): RevisionMeta {
-  if (!content) return DEFAULT_META;
-  const { frontmatter, body } = splitFrontmatter(content);
-
-  const tags = new Set<string>();
-  let note = '';
-  let status = '';
-
-  if (frontmatter) {
-    const lines = frontmatter.split('\n');
-    for (const line of lines) {
-      const [rawKey, ...valueParts] = line.split(':');
-      if (!rawKey || valueParts.length === 0) continue;
-      const key = rawKey.trim().toLowerCase();
-      const rawValue = valueParts.join(':').trim();
-      if (!rawValue) continue;
-
-      if (key === 'status') {
-        status = rawValue.replace(/^["']|["']$/g, '').toLowerCase();
-      }
-
-      if (key === 'note' || key === 'summary') {
-        note = rawValue.replace(/^["']|["']$/g, '');
-      }
-
-      if (key === 'tag' || key === 'tags') {
-        const cleaned = rawValue.replace(/^\[|\]$/g, '');
-        cleaned
-          .split(',')
-          .map((tag) => tag.trim().replace(/^["']|["']$/g, ''))
-          .filter(Boolean)
-          .forEach((tag) => tags.add(tag.toLowerCase()));
-      }
-    }
-  }
-
-  if (!note) {
-    const firstBodyLine = body
-      .split('\n')
-      .map((line) => line.trim())
-      .find((line) => line.length > 0 && !line.startsWith('#'));
-    note = firstBodyLine ? firstBodyLine.slice(0, 120) : '';
-  }
-
-  if (tags.size === 0) {
-    const tagMatches = body.match(/(^|\s)#([a-zA-Z0-9_-]+)/g) ?? [];
-    tagMatches.forEach((match) => {
-      const tag = match.trim().replace(/^#/, '').toLowerCase();
-      if (tag) tags.add(tag);
-    });
-  }
-
-  return {
-    tags: Array.from(tags),
-    note,
-    status,
-  };
-}
-
-// Helper function: keeps a small, testable transformation isolated from UI side effects.
 function parseFileStructure(fileName: string) {
   const normalized = fileName.replace(/^\/+/, '');
   const parts = normalized.split('/').filter(Boolean);
@@ -410,24 +359,6 @@ function renderHighlightedText(source: string, query: string) {
   );
 }
 
-function getCurrentWeekRange(): { from: string; to: string } {
-  const now = new Date();
-  const day = now.getDay();
-  const diffToMonday = (day + 6) % 7;
-  const start = new Date(now);
-  start.setDate(now.getDate() - diffToMonday);
-  start.setHours(0, 0, 0, 0);
-
-  const end = new Date(start);
-  end.setDate(start.getDate() + 6);
-  end.setHours(23, 59, 59, 999);
-
-  return {
-    from: start.toISOString().slice(0, 10),
-    to: end.toISOString().slice(0, 10),
-  };
-}
-
 // Main component export: this is the entry point rendered by parent routes/components.
 export default function Sidebar({
   selectedFile,
@@ -435,7 +366,7 @@ export default function Sidebar({
   onFileDeleted,
   onFileRenamed,
   onJumpToHeading,
-  applyFilter,
+  applyFilter: applyExternalFilter,
 }: SidebarProps) {
   const { files, isLoading, createFile, deleteFile, deleteFiles, renameFile } = useFiles();
   const [newFileName, setNewFileName] = useState('');
@@ -462,10 +393,10 @@ export default function Sidebar({
   const [selectedHeading, setSelectedHeading] = useState('');
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
-  const [savedFilters, setSavedFilters] = useState<Array<{ id: string; name: string; filter: any }>>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const zipInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+  const renamingInFlightRef = useRef(false);
   const [importWizard, setImportWizard] = useState<ImportWizardState | null>(null);
   const [importTemplate, setImportTemplate] = useState('chapter-{n}-r{rev}.md');
   const [wizardLoading, setWizardLoading] = useState(false);
@@ -500,6 +431,7 @@ export default function Sidebar({
     setMetaSearch(filter.metaSearch);
     setDateFrom(filter.dateFrom);
     setDateTo(filter.dateTo);
+    applyExternalFilter(filter);
   }
 
   function saveCurrentFilter() {
@@ -1201,7 +1133,7 @@ export default function Sidebar({
               <div key={filter.id} className="inline-flex items-center rounded border border-gray-600 overflow-hidden">
                 <button
                   type="button"
-                  onClick={() => applyFilter(filter.filter)}
+                  onClick={() => applyFilter(filter)}
                   className="text-[11px] px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-100"
                 >
                   {filter.name}

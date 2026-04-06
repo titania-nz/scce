@@ -1,9 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import dynamic from 'next/dynamic';
 import { useFiles } from '@/hooks/useFiles';
 import { useFileContent } from '@/hooks/useFileContent';
+import { buildFileApiPath } from '@/lib/fileApiPath';
 import { computeDiff } from '@/lib/diffUtils';
+import { RevisionStatus } from '@/types';
 import DiffView, { HunkMergeState } from './DiffView';
 
 interface CompareViewProps {
@@ -80,6 +83,11 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
   const headerA = selectedRevisionA?.note ? `${selectedA} - ${selectedRevisionA.note}` : selectedA ?? '';
   const headerB = selectedRevisionB?.note ? `${selectedB} - ${selectedRevisionB.note}` : selectedB ?? '';
   const hasDiff = !diff.isIdentical && diff.hunks.length > 0;
+  const targetFilename = useMemo(() => {
+    if (destination === 'overwrite-b') return selectedB ?? '';
+    if (destination === 'new-path') return newFilePath.trim();
+    return selectedA ?? '';
+  }, [destination, newFilePath, selectedA, selectedB]);
 
   useEffect(() => {
     setMergeStateByHunk(() =>
@@ -131,6 +139,79 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
   useEffect(() => {
     setMergedOutput(mergedOutputDraft);
   }, [mergedOutputDraft]);
+
+  useEffect(() => {
+    setUnresolvedHunks(unresolvedCount);
+  }, [unresolvedCount]);
+
+  async function handleFinalize() {
+    if (!bothSelected) {
+      setErrorMessage('Select two files before finalizing a merge.');
+      return;
+    }
+    if (!canFinalizeMerge) {
+      setErrorMessage('Resolve all merge hunks before finalizing.');
+      return;
+    }
+
+    const filename = targetFilename.trim();
+    if (!filename) {
+      setSaveError('Choose a merge target before saving.');
+      return;
+    }
+
+    const tags = mergeTagsInput
+      .split(',')
+      .map((tag) => tag.trim())
+      .filter(Boolean);
+
+    const payload = {
+      content: mergedOutput,
+      note: mergeNote || `Merged ${selectedA} and ${selectedB}`,
+      tags,
+      status: mergeStatus || undefined,
+    };
+
+    setIsSavingMerged(true);
+    setErrorMessage(null);
+    setSaveError(null);
+    setSaveSuccess(null);
+
+    try {
+      if (destination === 'overwrite-a' && selectedA) {
+        await saveA(mergedOutput, payload);
+      } else if (destination === 'overwrite-b' && selectedB) {
+        await saveB(mergedOutput, payload);
+      } else {
+        const existingFile = files.find((file) => file.name === filename);
+        if (!existingFile) {
+          await createFile(filename, mergedOutput);
+        } else {
+          const response = await fetch(buildFileApiPath(filename), {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          if (!response.ok) {
+            const errorPayload = (await response.json().catch(() => ({}))) as { error?: string };
+            throw new Error(errorPayload.error ?? `Could not save ${filename}`);
+          }
+        }
+        await mutateFiles();
+        onFileSelect?.(filename);
+      }
+
+      setSaveSuccess(`Merged output saved to ${filename}.`);
+      setMergedDirty(false);
+      onDirtyChange?.(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not finalize merge';
+      setSaveError(message);
+      setErrorMessage(message);
+    } finally {
+      setIsSavingMerged(false);
+    }
+  }
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">

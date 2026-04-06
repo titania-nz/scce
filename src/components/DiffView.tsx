@@ -21,6 +21,7 @@ interface DiffViewProps {
   actionHint?: string;
   actionDisabled?: boolean;
   onAction?: () => void | Promise<void>;
+  onMergeStateChange?: (state: { mergedContent: string; unresolvedCount: number }) => void;
 }
 
 function DiffLineRow({ line }: { line: DiffLine }) {
@@ -146,6 +147,7 @@ export default function DiffView({
   actionHint,
   actionDisabled = false,
   onAction,
+  onMergeStateChange,
 }: DiffViewProps) {
   const diff = useMemo(() => buildPreparedDiff(contentA, contentB), [contentA, contentB]);
   const [activeIdx, setActiveIdx] = useState(0);
