@@ -1,8 +1,8 @@
 'use client';
 
 import useSWR from 'swr';
-import { FileContentResponse, Revision, RevisionStatus } from '@/types';
-import { buildFileApiPath, buildFileDraftApiPath } from '@/lib/fileApiPath';
+import { FileContentResponse, Revision, RevisionInlineNote, RevisionStatus } from '@/types';
+import { buildFileApiPath, buildFileDraftApiPath, buildFileRevisionsApiPath } from '@/lib/fileApiPath';
 import { fetchJson } from '@/lib/fetchJson';
 
 const fetcher = (url: string) => fetchJson<FileContentResponse>(url, 'Could not load file content');
@@ -57,6 +57,20 @@ export function useFileContent(filename: string | null, revisionId?: string | nu
     await mutate();
   }
 
+  async function updateRevisionInlineNotes(revisionId: string, inlineNotes: RevisionInlineNote[]): Promise<void> {
+    if (!filename) return;
+    const res = await fetch(buildFileRevisionsApiPath(filename), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ revisionId, inlineNotes }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error ?? 'Could not update revision notes');
+    }
+    await mutate();
+  }
+
   return {
     content: data?.content ?? '',
     revisions: data?.revisions ?? [],
@@ -66,6 +80,7 @@ export function useFileContent(filename: string | null, revisionId?: string | nu
     error,
     saveContent,
     promoteRevisionAsDraft,
+    updateRevisionInlineNotes,
     mutate,
   };
 }
