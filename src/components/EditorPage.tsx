@@ -10,7 +10,7 @@ import DiffView from './DiffView';
 import { useFileContent } from '@/hooks/useFileContent';
 import { useAutoSave } from '@/hooks/useAutoSave';
 import { buildFileExportApiPath, buildFilePublishApiPath } from '@/lib/fileApiPath';
-import { PublishHistoryEntry, PublishTargetProfile, RevisionStatus } from '@/types';
+import { PublishHistoryEntry, PublishTargetProfile, RevisionStatus, Revision } from '@/types';
 
 // CodeMirror accesses browser APIs — must be dynamically imported with ssr:false
 const EditorPane = dynamic(() => import('./EditorPane'), { ssr: false });
