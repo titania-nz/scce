@@ -8,7 +8,17 @@ import Toolbar from './Toolbar';
 import CompareView from './CompareView';
 import { useFileContent } from '@/hooks/useFileContent';
 import { useAutoSave } from '@/hooks/useAutoSave';
-import { RevisionStatus } from '@/types';
+import { FileContentResponse, RevisionStatus } from '@/types';
+import type {
+  DeltaAssistResponse,
+  MetadataAssistResponse,
+  ReviewAssistResponse,
+  RewriteAssistResponse,
+  RewriteMode,
+} from '@/lib/aiAssist';
+import { fetchJson } from '@/lib/fetchJson';
+import { buildFileApiPath } from '@/lib/fileApiPath';
+import type { EditorActions } from './EditorPane';
 
 // CodeMirror accesses browser APIs — must be dynamically imported with ssr:false
 const EditorPane = dynamic(() => import('./EditorPane'), { ssr: false });
@@ -32,14 +42,33 @@ export default function EditorPage() {
   const [status, setStatus] = useState<RevisionStatus | ''>('');
   const [workingDraftByFile, setWorkingDraftByFile] = useState<Record<string, string>>({});
   const [lastCheckpointAtByFile, setLastCheckpointAtByFile] = useState<Record<string, string>>({});
+  const [selectedText, setSelectedText] = useState('');
+  const [aiMessage, setAiMessage] = useState<string | null>(null);
+  const [reviewFindings, setReviewFindings] = useState<Array<{ level: 'info' | 'warn'; message: string }>>([]);
+  const [reviewMode, setReviewMode] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
 
   const { content: loadedContent, revisions, isLoading, saveContent } = useFileContent(selectedFile);
   const prevFileRef = useRef<string | null>(null);
+  const editorActionsRef = useRef<EditorActions | null>(null);
 
   const parsedTags = useMemo(
     () => tagsInput.split(',').map((tag) => tag.trim()).filter(Boolean),
     [tagsInput],
   );
+
+  const callAssist = useCallback(async <T,>(payload: object): Promise<T> => {
+    const response = await fetch('/api/ai/assist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = (await response.json().catch(() => ({}))) as { error?: string } & T;
+    if (!response.ok) {
+      throw new Error(data.error ?? 'AI assistant request failed');
+    }
+    return data;
+  }, []);
 
   const saveWorkingCopy = useCallback(async (draftContent: string) => {
     if (!selectedFile) return;
@@ -126,6 +155,120 @@ export default function EditorPage() {
   const handleContinueWorkingDraft = useCallback(async () => {
     await saveWorkingCopy(content);
   }, [content, saveWorkingCopy]);
+
+  const handleRewrite = useCallback(async (mode: RewriteMode) => {
+    const actions = editorActionsRef.current;
+    if (!actions) {
+      setAiMessage('Editor is not ready yet.');
+      return;
+    }
+
+    const rawSelection = actions.getSelectedText();
+    if (!rawSelection.trim()) {
+      setAiMessage('Select text in the editor first, then run rewrite.');
+      return;
+    }
+
+    try {
+      setAiBusy(true);
+      const response = await callAssist<RewriteAssistResponse>({
+        action: 'rewrite',
+        mode,
+        selection: rawSelection,
+      });
+      if (!response.rewritten?.trim()) {
+        setAiMessage('AI did not return rewritten text.');
+        return;
+      }
+      actions.replaceSelection(response.rewritten);
+      setAiMessage(`Applied ${mode} rewrite from AI assistant.`);
+    } catch (error) {
+      setAiMessage(error instanceof Error ? error.message : 'Could not rewrite selection.');
+    } finally {
+      setAiBusy(false);
+    }
+  }, [callAssist]);
+
+  const handleMetadataSuggestion = useCallback(async () => {
+    try {
+      setAiBusy(true);
+      const suggestion = await callAssist<MetadataAssistResponse>({
+        action: 'metadata',
+        content,
+      });
+      setRevisionNote(suggestion.title ?? '');
+      setTagsInput(Array.isArray(suggestion.tags) ? suggestion.tags.join(', ') : '');
+      setStatus(
+        suggestion.status === 'accepted' || suggestion.status === 'rejected' || suggestion.status === 'needs-review'
+          ? suggestion.status
+          : '',
+      );
+      setAiMessage('Generated title/tags/status suggestions and applied them.');
+    } catch (error) {
+      setAiMessage(error instanceof Error ? error.message : 'Could not suggest metadata.');
+    } finally {
+      setAiBusy(false);
+    }
+  }, [callAssist, content]);
+
+  const handleDeltaSummary = useCallback(async () => {
+    if (!selectedFile) {
+      setAiMessage('Select a file to compare against accepted revision.');
+      return;
+    }
+
+    const accepted = [...revisions].reverse().find((revision) => revision.status === 'accepted');
+    if (!accepted) {
+      setAiMessage('No accepted revision found yet for this file.');
+      return;
+    }
+
+    try {
+      const payload = await fetchJson<FileContentResponse>(
+        `${buildFileApiPath(selectedFile)}?revisionId=${encodeURIComponent(accepted.id)}`,
+        'Could not load accepted revision.',
+      );
+      setAiBusy(true);
+      const summary = await callAssist<DeltaAssistResponse>({
+        action: 'delta',
+        previousContent: payload.content,
+        currentContent: content,
+      });
+      setRevisionNote(summary.summary ?? '');
+      setAiMessage('Generated AI summary since the last accepted revision.');
+    } catch (error) {
+      setAiMessage(error instanceof Error ? error.message : 'Could not summarize revision delta.');
+    } finally {
+      setAiBusy(false);
+    }
+  }, [callAssist, content, revisions, selectedFile]);
+
+  const handleReviewMode = useCallback(() => {
+    const nextMode = !reviewMode;
+    setReviewMode(nextMode);
+    if (!nextMode) {
+      setReviewFindings([]);
+      setAiMessage('Review mode disabled.');
+      return;
+    }
+
+    void (async () => {
+      try {
+        setAiBusy(true);
+        const response = await callAssist<ReviewAssistResponse>({
+          action: 'review',
+          content,
+        });
+        const findings = Array.isArray(response.findings) ? response.findings : [];
+        setReviewFindings(findings);
+        setAiMessage(`Review mode flagged ${findings.length} item(s).`);
+      } catch (error) {
+        setAiMessage(error instanceof Error ? error.message : 'Could not run review mode.');
+      } finally {
+        setAiBusy(false);
+      }
+    })();
+  }, [callAssist, content, reviewMode]);
 
   // Ctrl+S to save checkpoint revision
   useEffect(() => {
@@ -254,7 +397,14 @@ export default function EditorPage() {
           <div className="flex-1 flex overflow-hidden">
             <div className="flex-1 flex overflow-hidden">
               <div className={`flex-1 flex overflow-hidden ${mobileView === 'preview' ? 'hidden md:flex' : 'flex'}`}>
-                <EditorPane value={content} onChange={handleContentChange} />
+                <EditorPane
+                  value={content}
+                  onChange={handleContentChange}
+                  onSelectionChange={setSelectedText}
+                  registerActions={(actions) => {
+                    editorActionsRef.current = actions;
+                  }}
+                />
               </div>
 
               <div className="hidden md:block w-px bg-gray-700 shrink-0" />
@@ -301,6 +451,79 @@ export default function EditorPage() {
                     placeholder="planning, scope"
                   />
                 </label>
+
+                <div className="space-y-2 rounded border border-gray-700 bg-gray-900/70 p-2">
+                  <h3 className="text-[11px] font-semibold uppercase tracking-wide text-purple-300">AI Assistant</h3>
+                  <p className="text-[11px] text-gray-400">Selection: {selectedText.trim().length} chars</p>
+
+                  <div className="grid grid-cols-3 gap-1">
+                    <button
+                      type="button"
+                      className="rounded border border-purple-600/40 bg-purple-500/10 px-2 py-1 text-[11px] text-purple-100 hover:bg-purple-500/20"
+                      onClick={() => void handleRewrite('clarify')}
+                      disabled={aiBusy}
+                    >
+                      Clarify
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded border border-purple-600/40 bg-purple-500/10 px-2 py-1 text-[11px] text-purple-100 hover:bg-purple-500/20"
+                      onClick={() => void handleRewrite('shorten')}
+                      disabled={aiBusy}
+                    >
+                      Shorten
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded border border-purple-600/40 bg-purple-500/10 px-2 py-1 text-[11px] text-purple-100 hover:bg-purple-500/20"
+                      onClick={() => void handleRewrite('formalize')}
+                      disabled={aiBusy}
+                    >
+                      Formalize
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    className="w-full rounded border border-gray-600 px-2 py-1 text-[11px] text-gray-200 hover:bg-gray-800"
+                    onClick={() => void handleDeltaSummary()}
+                    disabled={aiBusy}
+                  >
+                    Summarize delta since last accepted
+                  </button>
+                  <button
+                    type="button"
+                    className="w-full rounded border border-gray-600 px-2 py-1 text-[11px] text-gray-200 hover:bg-gray-800"
+                    onClick={() => void handleMetadataSuggestion()}
+                    disabled={aiBusy}
+                  >
+                    Suggest title / tags / status
+                  </button>
+                  <button
+                    type="button"
+                    className={`w-full rounded border px-2 py-1 text-[11px] ${
+                      reviewMode
+                        ? 'border-blue-500 bg-blue-500/20 text-blue-100'
+                        : 'border-gray-600 text-gray-200 hover:bg-gray-800'
+                    }`}
+                    onClick={handleReviewMode}
+                    disabled={aiBusy}
+                  >
+                    {reviewMode ? 'Disable review mode' : 'Enable review mode'}
+                  </button>
+
+                  {aiMessage && <p className="text-[11px] text-gray-300">{aiMessage}</p>}
+                  {aiBusy && <p className="text-[11px] text-purple-200">AI assistant is thinking...</p>}
+                  {reviewMode && (
+                    <ul className="space-y-1 text-[11px]">
+                      {reviewFindings.map((finding) => (
+                        <li key={finding.message} className={finding.level === 'warn' ? 'text-amber-300' : 'text-blue-200'}>
+                          {finding.level === 'warn' ? '⚠' : 'ℹ'} {finding.message}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               </div>
 
               <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2">

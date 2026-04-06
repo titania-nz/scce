@@ -29,6 +29,8 @@ In **Site Settings > Environment variables**, add the following:
 |---|---|
 | `AUTH_PASSWORD` | The password you will type on the login screen |
 | `AUTH_SECRET` | A long random secret used to sign the auth cookie - generate one with `openssl rand -hex 32` |
+| `OPENAI_API_KEY` | Optional. Enables AI assistant actions in the editor sidebar. |
+| `OPENAI_MODEL` | Optional. Defaults to `gpt-4.1-mini` for `/api/ai/assist`. |
 
 ### 3. Deploy
 
@@ -43,3 +45,7 @@ On Netlify, notes are stored in **Netlify Blobs** (persistent key-value storage 
 All routes are protected by a password set via the `AUTH_PASSWORD` environment variable. After a successful login, an httpOnly cookie is set that lasts 30 days. To log out, visit `/login` — a logout option can be added if needed.
 
 If `AUTH_SECRET` is not set, the site will return a `503` error on every request as a safety measure.
+
+## AI assistant
+
+The editor sidebar includes AI-powered actions for rewrite, delta summary, metadata suggestion, and review mode. These actions call `POST /api/ai/assist` and require `OPENAI_API_KEY`. If the key is missing, the UI will show an error message and continue working without AI assistance.
