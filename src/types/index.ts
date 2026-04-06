@@ -1,6 +1,7 @@
 export interface FileEntry {
   name: string;
   mtime: string;
+  ctime?: string;
   size: number;
 }
 

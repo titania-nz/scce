@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFiles } from '@/hooks/useFiles';
 import { FileEntry } from '@/types';
 
@@ -9,6 +9,194 @@ interface SidebarProps {
   onFileSelect: (filename: string) => void;
   onFileDeleted: (filename: string) => void;
   onFileRenamed: (oldName: string, newName: string) => void;
+}
+
+interface RevisionMeta {
+  tags: string[];
+  note: string;
+  status: string;
+}
+
+interface RevisionItem {
+  file: FileEntry;
+  document: string;
+  chapter: string;
+  revisionOrder: number | null;
+  revisionLabel: string;
+  meta: RevisionMeta;
+  createdAt: Date;
+}
+
+interface ChapterGroup {
+  chapter: string;
+  revisions: RevisionItem[];
+}
+
+interface DocumentGroup {
+  document: string;
+  chapters: ChapterGroup[];
+}
+
+const DEFAULT_META: RevisionMeta = {
+  tags: [],
+  note: '',
+  status: '',
+};
+
+function formatDate(value: string | undefined): string {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return new Intl.DateTimeFormat(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+  }).format(date);
+}
+
+function formatSize(size: number): string {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function splitFrontmatter(content: string): { frontmatter: string; body: string } {
+  if (!content.startsWith('---\n')) {
+    return { frontmatter: '', body: content };
+  }
+
+  const endMarkerIndex = content.indexOf('\n---\n', 4);
+  if (endMarkerIndex === -1) {
+    return { frontmatter: '', body: content };
+  }
+
+  return {
+    frontmatter: content.slice(4, endMarkerIndex),
+    body: content.slice(endMarkerIndex + 5),
+  };
+}
+
+function parseMetaFromContent(content: string): RevisionMeta {
+  if (!content) return DEFAULT_META;
+  const { frontmatter, body } = splitFrontmatter(content);
+
+  const tags = new Set<string>();
+  let note = '';
+  let status = '';
+
+  if (frontmatter) {
+    const lines = frontmatter.split('\n');
+    for (const line of lines) {
+      const [rawKey, ...valueParts] = line.split(':');
+      if (!rawKey || valueParts.length === 0) continue;
+      const key = rawKey.trim().toLowerCase();
+      const rawValue = valueParts.join(':').trim();
+      if (!rawValue) continue;
+
+      if (key === 'status') {
+        status = rawValue.replace(/^["']|["']$/g, '').toLowerCase();
+      }
+
+      if (key === 'note' || key === 'summary') {
+        note = rawValue.replace(/^["']|["']$/g, '');
+      }
+
+      if (key === 'tag' || key === 'tags') {
+        const cleaned = rawValue.replace(/^\[|\]$/g, '');
+        cleaned
+          .split(',')
+          .map((tag) => tag.trim().replace(/^["']|["']$/g, ''))
+          .filter(Boolean)
+          .forEach((tag) => tags.add(tag.toLowerCase()));
+      }
+    }
+  }
+
+  if (!note) {
+    const firstBodyLine = body
+      .split('\n')
+      .map((line) => line.trim())
+      .find((line) => line.length > 0 && !line.startsWith('#'));
+    note = firstBodyLine ? firstBodyLine.slice(0, 120) : '';
+  }
+
+  if (tags.size === 0) {
+    const tagMatches = body.match(/(^|\s)#([a-zA-Z0-9_-]+)/g) ?? [];
+    tagMatches.forEach((match) => {
+      const tag = match.trim().replace(/^#/, '').toLowerCase();
+      if (tag) tags.add(tag);
+    });
+  }
+
+  return {
+    tags: Array.from(tags),
+    note,
+    status,
+  };
+}
+
+function parseFileStructure(fileName: string) {
+  const stem = fileName.replace(/\.md$/, '');
+  const tokens = stem.split(/[\s._-]+/).filter(Boolean);
+
+  let revisionOrder: number | null = null;
+  let revisionLabel = 'Revision';
+  let chapterIndex = -1;
+
+  for (let i = tokens.length - 1; i >= 0; i -= 1) {
+    const token = tokens[i].toLowerCase();
+    const revisionMatch = token.match(/^(?:r|rev|revision|v)?(\d+)$/i);
+    if (revisionMatch) {
+      revisionOrder = Number(revisionMatch[1]);
+      revisionLabel = `R${revisionMatch[1]}`;
+      continue;
+    }
+
+    if (token === 'latest') {
+      revisionOrder = Number.MAX_SAFE_INTEGER;
+      revisionLabel = 'Latest';
+      continue;
+    }
+
+    const chapterMatch = token.match(/^(?:ch|chapter)(\d+)$/i);
+    if (chapterMatch) {
+      chapterIndex = i;
+      break;
+    }
+    if (token === 'chapter' && i + 1 < tokens.length) {
+      chapterIndex = i;
+      break;
+    }
+  }
+
+  let document = 'Ungrouped';
+  let chapter = 'General';
+
+  if (chapterIndex >= 0) {
+    const chapterToken = tokens[chapterIndex].toLowerCase();
+    if (chapterToken === 'chapter' && chapterIndex + 1 < tokens.length) {
+      chapter = `Chapter ${tokens[chapterIndex + 1]}`;
+    } else {
+      chapter = tokens[chapterIndex].replace(/^ch/i, 'Chapter ');
+    }
+
+    const docTokens = tokens.slice(0, chapterIndex).filter((token) => token.toLowerCase() !== 'chapter');
+    if (docTokens.length > 0) {
+      document = docTokens.join(' ');
+    }
+  } else if (tokens.length > 1) {
+    document = tokens[0];
+    chapter = tokens[1];
+  } else if (tokens.length === 1) {
+    document = tokens[0];
+  }
+
+  return {
+    document,
+    chapter,
+    revisionOrder,
+    revisionLabel,
+  };
 }
 
 export default function Sidebar({
@@ -24,7 +212,107 @@ export default function Sidebar({
   const [renamingFile, setRenamingFile] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [chapterSearch, setChapterSearch] = useState('');
+  const [metaSearch, setMetaSearch] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [collapsedDocuments, setCollapsedDocuments] = useState<Record<string, boolean>>({});
+  const [collapsedChapters, setCollapsedChapters] = useState<Record<string, boolean>>({});
+  const [revisionMetaByFile, setRevisionMetaByFile] = useState<Record<string, RevisionMeta>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadMetadata() {
+      const nextMeta: Record<string, RevisionMeta> = {};
+
+      await Promise.all(
+        files.map(async (file) => {
+          try {
+            const res = await fetch(`/api/files/${encodeURIComponent(file.name)}`);
+            if (!res.ok) return;
+            const payload = (await res.json()) as { content?: string };
+            nextMeta[file.name] = parseMetaFromContent(payload.content ?? '');
+          } catch {
+            nextMeta[file.name] = DEFAULT_META;
+          }
+        }),
+      );
+
+      if (!cancelled) {
+        setRevisionMetaByFile(nextMeta);
+      }
+    }
+
+    loadMetadata();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [files]);
+
+  const grouped = useMemo<DocumentGroup[]>(() => {
+    const items: RevisionItem[] = files.map((file) => {
+      const structure = parseFileStructure(file.name);
+      const createdAtSource = file.ctime ?? file.mtime;
+      const createdAt = new Date(createdAtSource);
+      return {
+        file,
+        ...structure,
+        meta: revisionMetaByFile[file.name] ?? DEFAULT_META,
+        createdAt: Number.isNaN(createdAt.getTime()) ? new Date(file.mtime) : createdAt,
+      };
+    });
+
+    const chapterFilter = chapterSearch.trim().toLowerCase();
+    const metaFilter = metaSearch.trim().toLowerCase();
+    const fromDate = dateFrom ? new Date(`${dateFrom}T00:00:00`) : null;
+    const toDate = dateTo ? new Date(`${dateTo}T23:59:59`) : null;
+
+    const filtered = items.filter((item) => {
+      const chapterMatches = !chapterFilter || item.chapter.toLowerCase().includes(chapterFilter);
+      const sourceText = [item.meta.note, item.meta.status, item.meta.tags.join(' ')].join(' ').toLowerCase();
+      const metaMatches = !metaFilter || sourceText.includes(metaFilter);
+      const fromMatches = !fromDate || item.createdAt >= fromDate;
+      const toMatches = !toDate || item.createdAt <= toDate;
+      return chapterMatches && metaMatches && fromMatches && toMatches;
+    });
+
+    const documentMap = new Map<string, Map<string, RevisionItem[]>>();
+
+    filtered.forEach((item) => {
+      if (!documentMap.has(item.document)) {
+        documentMap.set(item.document, new Map<string, RevisionItem[]>());
+      }
+      const chapterMap = documentMap.get(item.document)!;
+      if (!chapterMap.has(item.chapter)) {
+        chapterMap.set(item.chapter, []);
+      }
+      chapterMap.get(item.chapter)!.push(item);
+    });
+
+    const output: DocumentGroup[] = [];
+
+    documentMap.forEach((chapterMap, document) => {
+      const chapters: ChapterGroup[] = [];
+      chapterMap.forEach((revisions, chapter) => {
+        const orderedRevisions = [...revisions].sort((a, b) => {
+          const revA = a.revisionOrder ?? -1;
+          const revB = b.revisionOrder ?? -1;
+          if (revA !== revB) return revB - revA;
+          return b.createdAt.getTime() - a.createdAt.getTime();
+        });
+        chapters.push({ chapter, revisions: orderedRevisions });
+      });
+
+      chapters.sort((a, b) => a.chapter.localeCompare(b.chapter));
+      output.push({ document, chapters });
+    });
+
+    output.sort((a, b) => a.document.localeCompare(b.document));
+    return output;
+  }, [chapterSearch, dateFrom, dateTo, files, metaSearch, revisionMetaByFile]);
 
   function resetNewInput() {
     setShowNewInput(false);
@@ -71,7 +359,7 @@ export default function Sidebar({
         const base = file.name.includes('.')
           ? file.name.replace(/\.[^.]*$/, '')
           : file.name;
-        const name = base.replace(/[^a-zA-Z0-9_\-. ]/g, '_') + '.md';
+        const name = `${base.replace(/[^a-zA-Z0-9_\-. ]/g, '_')}.md`;
         await createFile(name, content);
         lastCreated = name;
       } catch (err: unknown) {
@@ -122,8 +410,16 @@ export default function Sidebar({
     }
   }
 
+  function toggleDocument(document: string) {
+    setCollapsedDocuments((prev) => ({ ...prev, [document]: !prev[document] }));
+  }
+
+  function toggleChapter(key: string) {
+    setCollapsedChapters((prev) => ({ ...prev, [key]: !prev[key] }));
+  }
+
   return (
-    <aside className="flex flex-col h-full bg-gray-900 text-gray-100 w-64 shrink-0">
+    <aside className="flex flex-col h-full bg-gray-900 text-gray-100 w-80 shrink-0 border-r border-gray-800">
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
         <span className="text-sm font-semibold text-gray-300 uppercase tracking-wider">Files</span>
         <div className="flex items-center gap-2">
@@ -156,7 +452,11 @@ export default function Sidebar({
             onChange={handleFileUpload}
           />
           <button
-            onClick={() => { setShowNewInput(true); setClipboardContent(null); setError(null); }}
+            onClick={() => {
+              setShowNewInput(true);
+              setClipboardContent(null);
+              setError(null);
+            }}
             className="text-gray-400 hover:text-white transition-colors"
             title="New file"
             aria-label="New file"
@@ -166,6 +466,39 @@ export default function Sidebar({
             </svg>
           </button>
         </div>
+      </div>
+
+      <div className="px-3 py-2 border-b border-gray-700 space-y-2">
+        <input
+          type="text"
+          value={chapterSearch}
+          onChange={(e) => setChapterSearch(e.target.value)}
+          placeholder="Filter by chapter name"
+          className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
+        />
+        <div className="grid grid-cols-2 gap-2">
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+            className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
+            aria-label="Created from date"
+          />
+          <input
+            type="date"
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+            className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
+            aria-label="Created to date"
+          />
+        </div>
+        <input
+          type="text"
+          value={metaSearch}
+          onChange={(e) => setMetaSearch(e.target.value)}
+          placeholder="Filter by note / tag / status"
+          className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
+        />
       </div>
 
       {error && (
@@ -214,67 +547,132 @@ export default function Sidebar({
       )}
 
       <div className="flex-1 overflow-y-auto">
-        {isLoading && (
-          <div className="px-4 py-3 text-sm text-gray-500">Loading...</div>
-        )}
-        {!isLoading && files.length === 0 && (
-          <div className="px-4 py-3 text-sm text-gray-500">No files yet</div>
-        )}
-        {files.map((file) => (
-          <div
-            key={file.name}
-            className={`group flex items-center px-3 py-2 cursor-pointer hover:bg-gray-800 transition-colors ${
-              selectedFile === file.name ? 'bg-gray-800 border-l-2 border-blue-500' : 'border-l-2 border-transparent'
-            }`}
-          >
-            {renamingFile === file.name ? (
-              <input
-                type="text"
-                value={renameValue}
-                onChange={(e) => setRenameValue(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleRename(file.name);
-                  if (e.key === 'Escape') setRenamingFile(null);
-                }}
-                onBlur={() => handleRename(file.name)}
-                className="flex-1 bg-gray-700 text-gray-100 text-sm px-1 py-0.5 rounded border border-gray-500 focus:outline-none focus:border-blue-500"
-                autoFocus
-              />
-            ) : (
-              <>
-                <span
-                  className="flex-1 text-sm truncate"
-                  onClick={() => onFileSelect(file.name)}
-                  title={file.name}
-                >
-                  {file.name}
-                </span>
-                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                  <button
-                    onClick={(e) => { e.stopPropagation(); startRename(file); }}
-                    className="text-gray-400 hover:text-white p-0.5"
-                    title="Rename"
-                    aria-label={`Rename ${file.name}`}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                    </svg>
-                  </button>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleDelete(file); }}
-                    className="text-gray-400 hover:text-red-400 p-0.5"
-                    title="Delete"
-                    aria-label={`Delete ${file.name}`}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                    </svg>
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        ))}
+        {isLoading && <div className="px-4 py-3 text-sm text-gray-500">Loading...</div>}
+        {!isLoading && grouped.length === 0 && <div className="px-4 py-3 text-sm text-gray-500">No matching files</div>}
+
+        {grouped.map((documentGroup) => {
+          const documentCollapsed = collapsedDocuments[documentGroup.document] ?? false;
+          return (
+            <div key={documentGroup.document} className="border-b border-gray-800/70">
+              <button
+                onClick={() => toggleDocument(documentGroup.document)}
+                className="w-full flex items-center justify-between px-3 py-2 bg-gray-900/80 hover:bg-gray-800 transition-colors"
+              >
+                <span className="text-xs font-semibold uppercase tracking-wide text-gray-300 truncate">{documentGroup.document}</span>
+                <span className="text-[10px] text-gray-500">{documentCollapsed ? '+' : '-'}</span>
+              </button>
+
+              {!documentCollapsed && documentGroup.chapters.map((chapterGroup) => {
+                const chapterKey = `${documentGroup.document}::${chapterGroup.chapter}`;
+                const chapterCollapsed = collapsedChapters[chapterKey] ?? false;
+                const latestRevision = chapterGroup.revisions[0]?.file.name;
+
+                return (
+                  <div key={chapterKey} className="border-t border-gray-800/50">
+                    <button
+                      onClick={() => toggleChapter(chapterKey)}
+                      className="w-full flex items-center justify-between px-4 py-2 bg-gray-900/40 hover:bg-gray-800/70 transition-colors"
+                    >
+                      <span className="text-xs text-gray-300 truncate">{chapterGroup.chapter}</span>
+                      <span className="text-[10px] text-gray-500">{chapterCollapsed ? '+' : '-'}</span>
+                    </button>
+
+                    {!chapterCollapsed && (
+                      <div>
+                        {chapterGroup.revisions.map((revision) => {
+                          const status = revision.meta.status.toLowerCase();
+                          const isDraft = status.includes('draft') || revision.file.name.toLowerCase().includes('draft');
+                          const isCurrent = status.includes('current') || revision.file.name === latestRevision;
+
+                          return (
+                            <div
+                              key={revision.file.name}
+                              className={`group border-l-2 px-5 py-2 cursor-pointer hover:bg-gray-800/70 transition-colors ${
+                                selectedFile === revision.file.name
+                                  ? 'bg-gray-800 border-blue-500'
+                                  : 'border-transparent'
+                              }`}
+                            >
+                              {renamingFile === revision.file.name ? (
+                                <input
+                                  type="text"
+                                  value={renameValue}
+                                  onChange={(e) => setRenameValue(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleRename(revision.file.name);
+                                    if (e.key === 'Escape') setRenamingFile(null);
+                                  }}
+                                  onBlur={() => handleRename(revision.file.name)}
+                                  className="w-full bg-gray-700 text-gray-100 text-sm px-1 py-0.5 rounded border border-gray-500 focus:outline-none focus:border-blue-500"
+                                  autoFocus
+                                />
+                              ) : (
+                                <>
+                                  <div className="flex items-center gap-2" onClick={() => onFileSelect(revision.file.name)}>
+                                    <span className="text-sm truncate">{revision.revisionLabel}</span>
+                                    {isDraft && (
+                                      <span className="text-[10px] font-semibold uppercase bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded">
+                                        Draft
+                                      </span>
+                                    )}
+                                    {isCurrent && (
+                                      <span className="text-[10px] font-semibold uppercase bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded">
+                                        Current
+                                      </span>
+                                    )}
+                                    <div className="ml-auto flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          startRename(revision.file);
+                                        }}
+                                        className="text-gray-400 hover:text-white p-0.5"
+                                        title="Rename"
+                                        aria-label={`Rename ${revision.file.name}`}
+                                      >
+                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                        </svg>
+                                      </button>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleDelete(revision.file);
+                                        }}
+                                        className="text-gray-400 hover:text-red-400 p-0.5"
+                                        title="Delete"
+                                        aria-label={`Delete ${revision.file.name}`}
+                                      >
+                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                        </svg>
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  <div className="mt-1 text-[11px] text-gray-400 space-y-0.5" onClick={() => onFileSelect(revision.file.name)}>
+                                    <div className="flex gap-2">
+                                      <span>Created: {formatDate(revision.file.ctime ?? revision.file.mtime)}</span>
+                                      <span>Size: {formatSize(revision.file.size)}</span>
+                                    </div>
+                                    {revision.meta.note && <div className="truncate">{revision.meta.note}</div>}
+                                    {revision.meta.tags.length > 0 && (
+                                      <div className="truncate text-blue-300/90">#{revision.meta.tags.join(' #')}</div>
+                                    )}
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
       </div>
     </aside>
   );
