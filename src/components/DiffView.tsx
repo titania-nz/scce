@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { diffLines, Change } from 'diff';
-import { DiffLine } from '@/lib/diffUtils';
+import { DiffLine, DiffHunk } from '@/lib/diffUtils';
 
 interface DiffViewProps {
   contentA: string;
@@ -51,7 +51,7 @@ function HunkBlock({
   onResolve,
   hunkRef,
 }: {
-  hunk: DisplayHunk;
+  hunk: DiffHunk;
   total: number;
   isActive: boolean;
   resolution?: 'a' | 'b';
