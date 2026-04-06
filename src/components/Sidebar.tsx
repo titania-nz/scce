@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFiles } from '@/hooks/useFiles';
 import { FileEntry } from '@/types';
-import { buildFileApiPath } from '@/lib/fileApiPath';
+import { DEFAULT_REVISION_META, RevisionMetaSummary } from '@/lib/revisionMeta';
 
 interface SidebarProps {
   selectedFile: string | null;
@@ -12,10 +12,12 @@ interface SidebarProps {
   onFileRenamed: (oldName: string, newName: string) => void;
 }
 
-interface RevisionMeta {
-  tags: string[];
-  note: string;
-  status: string;
+type RevisionMeta = RevisionMetaSummary;
+
+interface FileEntryWithMeta extends FileEntry {
+  tags?: string[];
+  note?: string;
+  status?: string;
 }
 
 interface RevisionItem {
@@ -38,11 +40,7 @@ interface DocumentGroup {
   chapters: ChapterGroup[];
 }
 
-const DEFAULT_META: RevisionMeta = {
-  tags: [],
-  note: '',
-  status: '',
-};
+const DEFAULT_META: RevisionMeta = DEFAULT_REVISION_META;
 
 // Helper function: keeps a small, testable transformation isolated from UI side effects.
 function formatDate(value: string | undefined): string {
@@ -69,83 +67,6 @@ function makeUploadFilename(originalName: string, takenNames: Set<string>): stri
   }
   takenNames.add(candidate);
   return candidate;
-}
-
-// Helper function: keeps a small, testable transformation isolated from UI side effects.
-function splitFrontmatter(content: string): { frontmatter: string; body: string } {
-  if (!content.startsWith('---\n')) {
-    return { frontmatter: '', body: content };
-  }
-
-  const endMarkerIndex = content.indexOf('\n---\n', 4);
-  if (endMarkerIndex === -1) {
-    return { frontmatter: '', body: content };
-  }
-
-  return {
-    frontmatter: content.slice(4, endMarkerIndex),
-    body: content.slice(endMarkerIndex + 5),
-  };
-}
-
-// Helper function: keeps a small, testable transformation isolated from UI side effects.
-function parseMetaFromContent(content: string): RevisionMeta {
-  if (!content) return DEFAULT_META;
-  const { frontmatter, body } = splitFrontmatter(content);
-
-  const tags = new Set<string>();
-  let note = '';
-  let status = '';
-
-  if (frontmatter) {
-    const lines = frontmatter.split('\n');
-    for (const line of lines) {
-      const [rawKey, ...valueParts] = line.split(':');
-      if (!rawKey || valueParts.length === 0) continue;
-      const key = rawKey.trim().toLowerCase();
-      const rawValue = valueParts.join(':').trim();
-      if (!rawValue) continue;
-
-      if (key === 'status') {
-        status = rawValue.replace(/^["']|["']$/g, '').toLowerCase();
-      }
-
-      if (key === 'note' || key === 'summary') {
-        note = rawValue.replace(/^["']|["']$/g, '');
-      }
-
-      if (key === 'tag' || key === 'tags') {
-        const cleaned = rawValue.replace(/^\[|\]$/g, '');
-        cleaned
-          .split(',')
-          .map((tag) => tag.trim().replace(/^["']|["']$/g, ''))
-          .filter(Boolean)
-          .forEach((tag) => tags.add(tag.toLowerCase()));
-      }
-    }
-  }
-
-  if (!note) {
-    const firstBodyLine = body
-      .split('\n')
-      .map((line) => line.trim())
-      .find((line) => line.length > 0 && !line.startsWith('#'));
-    note = firstBodyLine ? firstBodyLine.slice(0, 120) : '';
-  }
-
-  if (tags.size === 0) {
-    const tagMatches = body.match(/(^|\s)#([a-zA-Z0-9_-]+)/g) ?? [];
-    tagMatches.forEach((match) => {
-      const tag = match.trim().replace(/^#/, '').toLowerCase();
-      if (tag) tags.add(tag);
-    });
-  }
-
-  return {
-    tags: Array.from(tags),
-    note,
-    status,
-  };
 }
 
 // Helper function: keeps a small, testable transformation isolated from UI side effects.
@@ -242,19 +163,29 @@ export default function Sidebar({
 
     async function loadMetadata() {
       const nextMeta: Record<string, RevisionMeta> = {};
+      if (files.length === 0) {
+        if (!cancelled) {
+          setRevisionMetaByFile(nextMeta);
+        }
+        return;
+      }
 
-      await Promise.all(
-        files.map(async (file) => {
-          try {
-            const res = await fetch(buildFileApiPath(file.name));
-            if (!res.ok) return;
-            const payload = (await res.json()) as { content?: string };
-            nextMeta[file.name] = parseMetaFromContent(payload.content ?? '');
-          } catch {
-            nextMeta[file.name] = DEFAULT_META;
-          }
-        }),
-      );
+      try {
+        const res = await fetch('/api/files?includeMeta=1');
+        if (!res.ok) throw new Error('Could not load metadata');
+        const payload = (await res.json()) as { files?: FileEntryWithMeta[] };
+        (payload.files ?? []).forEach((file) => {
+          nextMeta[file.name] = {
+            tags: file.tags ?? [],
+            note: file.note ?? '',
+            status: file.status ?? '',
+          };
+        });
+      } catch {
+        files.forEach((file) => {
+          nextMeta[file.name] = DEFAULT_META;
+        });
+      }
 
       if (!cancelled) {
         setRevisionMetaByFile(nextMeta);

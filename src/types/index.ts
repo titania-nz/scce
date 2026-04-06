@@ -11,6 +11,13 @@ export interface FileListResponse {
 
 export type RevisionStatus = 'accepted' | 'rejected' | 'needs-review';
 
+export interface RevisionInlineNote {
+  id: string;
+  message: string;
+  lineNumber: number | null;
+  createdAt: string;
+}
+
 // Per-file UI/API revision metadata
 export interface Revision {
   id: string;
@@ -19,6 +26,7 @@ export interface Revision {
   note: string;
   tags?: string[];
   status?: RevisionStatus;
+  inlineNotes?: RevisionInlineNote[];
 }
 
 export interface FileContentResponse {

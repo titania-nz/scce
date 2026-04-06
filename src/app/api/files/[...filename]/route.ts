@@ -74,6 +74,9 @@ export async function PUT(request: NextRequest, { params }: Params) {
       if (!newName || typeof newName !== 'string') {
         return NextResponse.json({ error: 'Invalid new filename' }, { status: 400 });
       }
+      if (!newName.endsWith('.md')) {
+        return NextResponse.json({ error: 'Filename must end with .md' }, { status: 400 });
+      }
       await renameFile(filename, newName);
       await renameRevisions(filename, newName);
       return NextResponse.json({ name: newName });
