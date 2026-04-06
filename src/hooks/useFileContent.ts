@@ -2,7 +2,7 @@
 
 import useSWR from 'swr';
 import { FileContentResponse, Revision, RevisionStatus } from '@/types';
-import { buildFileApiPath } from '@/lib/fileApiPath';
+import { buildFileApiPath, buildFileDraftApiPath } from '@/lib/fileApiPath';
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -43,7 +43,7 @@ export function useFileContent(filename: string | null, revisionId?: string | nu
 
   async function promoteRevisionAsDraft(nextRevisionId: string): Promise<void> {
     if (!filename) return;
-    const res = await fetch(buildFileApiPath(filename, '/draft'), {
+    const res = await fetch(buildFileDraftApiPath(filename), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ revisionId: nextRevisionId }),
