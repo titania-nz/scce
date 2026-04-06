@@ -1,25 +1,11 @@
 import fs from 'fs';
 import path from 'path';
-import { getStore } from '@netlify/blobs';
-import { resolveSafePath } from '@/lib/fileStorage';
+import { getNotesDir, resolveSafePath } from '@/lib/fileStorage';
 import { Revision } from '@/types';
-
-const isNetlifyRuntime =
-  process.env.NETLIFY === 'true' ||
-  process.env.CONTEXT !== undefined ||
-  process.env.NETLIFY_BLOBS_CONTEXT !== undefined;
-
-function getBlobStore() {
-  if (!isNetlifyRuntime) {
-    return null;
-  }
-  return getStore('files');
-}
+import { isNetlifyRuntime, getBlobStore } from '@/lib/netlifyRuntime';
 
 function getRevisionsDir(): string {
-  const filePath = resolveSafePath('placeholder.md');
-  const notesDir = path.dirname(filePath);
-  const revisionDir = path.join(notesDir, '.revisions');
+  const revisionDir = path.join(getNotesDir(), '.revisions');
   fs.mkdirSync(revisionDir, { recursive: true });
   return revisionDir;
 }
