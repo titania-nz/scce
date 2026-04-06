@@ -403,8 +403,10 @@ export function getNotesDir(): string {
   if (isNetlifyRuntime) {
     return '';
   }
-  const dir = process.env.NOTES_DIR ?? './notes';
-  /*turbopackIgnore: true*/ fs.mkdirSync(dir, { recursive: true });
+  const defaultDir = path.join(/*turbopackIgnore: true*/ process.cwd(), 'notes');
+  const envDir = /*turbopackIgnore: true*/ process.env.NOTES_DIR?.trim();
+  const dir = envDir ? /*turbopackIgnore: true*/ path.resolve(envDir) : defaultDir;
+  fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
 
@@ -427,7 +429,7 @@ export function resolveSafePath(filename: string): string {
     return filename;
   }
   const notesDir = getNotesDir();
-  const resolved = path.resolve(notesDir, filename);
+  const resolved = path.resolve(notesDir, /*turbopackIgnore: true*/ filename);
   if (!resolved.startsWith(path.resolve(notesDir) + path.sep)) {
     throw Object.assign(new Error('Invalid filename'), { status: 400 });
   }
@@ -961,8 +963,8 @@ export async function listFiles(): Promise<FileEntry[]> {
   const files: FileEntry[] = [];
 
   const walk = (relativeDir = ''): void => {
-    const currentDir = path.join(dir, relativeDir);
-    const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+    const currentDir = path.join(dir, /*turbopackIgnore: true*/ relativeDir);
+    const entries = fs.readdirSync(/*turbopackIgnore: true*/ currentDir, { withFileTypes: true });
 
     for (const entry of entries) {
       const nextRelative = relativeDir ? path.posix.join(relativeDir, entry.name) : entry.name;
@@ -978,7 +980,7 @@ export async function listFiles(): Promise<FileEntry[]> {
         continue;
       }
 
-      const stat = fs.statSync(path.join(dir, nextRelative));
+      const stat = fs.statSync(path.join(dir, /*turbopackIgnore: true*/ nextRelative));
       files.push({
         name: nextRelative,
         mtime: stat.mtime.toISOString(),
