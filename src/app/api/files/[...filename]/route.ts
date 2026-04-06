@@ -38,7 +38,22 @@ export async function GET(_request: NextRequest, { params }: Params) {
   try {
     const filename = parseFilename(rawFilename);
     const [content, revisions] = await Promise.all([readFile(filename), readRevisions(filename)]);
-    return NextResponse.json({ name: filename, content, revisions });
+    const requestUrl = _request.nextUrl;
+    const revisionId = requestUrl.searchParams.get('revisionId');
+    const selectedRevision = revisionId
+      ? revisions.find((revision) => revision.id === revisionId)
+      : null;
+
+    if (revisionId && !selectedRevision) {
+      return NextResponse.json({ error: 'Revision not found' }, { status: 404 });
+    }
+
+    return NextResponse.json({
+      name: filename,
+      content: selectedRevision?.content ?? content,
+      revisions,
+      revisionId: selectedRevision?.id ?? null,
+    });
   } catch (err: unknown) {
     const e = err as { status?: number; message?: string };
     if (e.status === 404) return NextResponse.json({ error: 'File not found' }, { status: 404 });
