@@ -39,6 +39,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: GENERIC_AUTH_ERROR }, { status: 401 });
   }
 
+  const token = await createAuthToken(authSecret);
   const response = NextResponse.json({ ok: true });
   response.cookies.set(COOKIE_NAME, createAuthToken(authSecret), COOKIE_OPTIONS);
   return response;
