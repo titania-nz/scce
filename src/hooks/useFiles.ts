@@ -4,7 +4,11 @@ import useSWR from 'swr';
 import { FileEntry, FileListResponse } from '@/types';
 import { buildFileApiPath } from '@/lib/fileApiPath';
 
-const fetcher = (url: string) => fetch(url).then((r) => r.json());
+const fetcher = (url: string) =>
+  fetch(url).then((r) => {
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  });
 
 // Public hook/helper: called from UI code to encapsulate shared stateful behavior.
 export function useFiles() {

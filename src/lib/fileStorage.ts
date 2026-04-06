@@ -206,6 +206,7 @@ async function readDocumentRootRecord(documentId: string): Promise<Document> {
     if (!store) throw Object.assign(new Error('Document not found'), { status: 404 });
     try {
       const buffer = await store.get(documentMetaBlobKey(documentId));
+      if (!buffer) throw new Error('missing');
       return JSON.parse(new TextDecoder().decode(buffer)) as Document;
     } catch {
       throw Object.assign(new Error('Document not found'), { status: 404 });
@@ -229,6 +230,7 @@ async function migrateLegacyFileToInitialRevision(filename: string): Promise<voi
     if (!store) return;
     try {
       const buffer = await store.get(key);
+      if (!buffer) return;
       content = new TextDecoder().decode(buffer);
     } catch {
       return;
@@ -386,6 +388,7 @@ export async function listRevisionsByDocumentId(documentId: string): Promise<Doc
     for (const blob of blobs) {
       if (!blob.key.endsWith('.json')) continue;
       const buffer = await store.get(blob.key);
+      if (!buffer) continue;
       const parsed = JSON.parse(new TextDecoder().decode(buffer)) as DocumentRevision;
       revisions.push(ensureRevision(parsed));
     }
@@ -710,6 +713,8 @@ export async function renameFile(oldName: string, newName: string): Promise<void
         ],
       });
     }
+
+    await removeDocumentData(oldName);
   }
 }
 

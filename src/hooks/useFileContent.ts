@@ -4,7 +4,11 @@ import useSWR from 'swr';
 import { FileContentResponse, Revision, RevisionStatus } from '@/types';
 import { buildFileApiPath, buildFileDraftApiPath } from '@/lib/fileApiPath';
 
-const fetcher = (url: string) => fetch(url).then((r) => r.json());
+const fetcher = (url: string) =>
+  fetch(url).then((r) => {
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  });
 
 interface SaveContentOptions {
   note?: string;
