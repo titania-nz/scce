@@ -40,18 +40,6 @@ export default function EditorPage() {
     [tagsInput],
   );
 
-  // When loaded content changes (new file selected), update editor content
-  useEffect(() => {
-    if (selectedFile !== prevFileRef.current) {
-      prevFileRef.current = selectedFile;
-      setContent(loadedContent);
-      setIsDirty(false);
-      const latestRevision = revisions.at(-1);
-      setRevisionNote(latestRevision?.note ?? '');
-      setStatus(latestRevision?.status ?? '');
-      setTagsInput((latestRevision?.tags ?? []).join(', '));
-    }
-  }, [loadedContent, revisions, selectedFile]);
   const saveWorkingCopy = useCallback(async (draftContent: string) => {
     if (!selectedFile) return;
     setWorkingDraftByFile((prev) => {
@@ -62,10 +50,15 @@ export default function EditorPage() {
     });
   }, [selectedFile]);
 
-  // When loaded content changes (new file selected), update editor from working draft if present.
+  // When file selection changes, update editor from working draft if present and sync revision metadata.
   useEffect(() => {
     if (selectedFile !== prevFileRef.current) {
       prevFileRef.current = selectedFile;
+      const latestRevision = revisions.at(-1);
+      setRevisionNote(latestRevision?.note ?? '');
+      setStatus(latestRevision?.status ?? '');
+      setTagsInput((latestRevision?.tags ?? []).join(', '));
+
       if (!selectedFile) {
         setContent('');
         setIsDirty(false);
@@ -81,19 +74,20 @@ export default function EditorPage() {
         setIsDirty(false);
       }
     }
-  }, [loadedContent, selectedFile, workingDraftByFile]);
+  }, [loadedContent, revisions, selectedFile, workingDraftByFile]);
 
   const { isSaving, saveNow } = useAutoSave({
     content,
     filename: selectedFile,
     isDirty,
-    saveFn: async (c) => {
-      await saveContent(c, { note: revisionNote, tags: parsedTags, status: status || undefined });
-    },
     saveWorkingCopyFn: saveWorkingCopy,
     saveCheckpointFn: async (checkpointContent) => {
       if (!selectedFile) return;
-      await saveContent(checkpointContent);
+      await saveContent(checkpointContent, {
+        note: revisionNote,
+        tags: parsedTags,
+        status: status || undefined,
+      });
       setWorkingDraftByFile((prev) => {
         const next = { ...prev };
         delete next[selectedFile];
