@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import {
+  CollaborationState,
   CreateDocumentInput,
   CreateRevisionInput,
   DocumentBranchName,
@@ -10,6 +11,9 @@ import {
   Document,
   DocumentRevision,
   FileEntry,
+  RevisionAuditEvent,
+  RevisionComment,
+  ReviewRequest,
   RevisionEntry,
   RevisionNote,
 } from '@/types';
@@ -27,6 +31,12 @@ const DOCUMENT_COMMENTS_DIR = 'comments';
 interface FileRevisionMeta {
   currentDraftRevisionId: string | null;
   revisions: RevisionEntry[];
+}
+
+interface BlobFileMetaRecord {
+  createdAt: string;
+  updatedAt: string;
+  size: number;
 }
 
 const EMPTY_META: FileRevisionMeta = {
@@ -68,6 +78,49 @@ function getRevisionMetaKey(filename: string): string {
 
 function getRevisionContentKey(filename: string, revisionId: string): string {
   return `__revisions__/${encodeFilenameForPath(filename)}/${revisionId}.md`;
+}
+
+function getBlobFileMetaKey(filename: string): string {
+  return `__filemeta__/${encodeFilenameForPath(filename)}.json`;
+}
+
+function buildBlobFileMetaRecord(existing: BlobFileMetaRecord | null, size: number): BlobFileMetaRecord {
+  const timestamp = nowIso();
+  return {
+    createdAt: existing?.createdAt ?? timestamp,
+    updatedAt: timestamp,
+    size,
+  };
+}
+
+async function readBlobFileMeta(filename: string): Promise<BlobFileMetaRecord | null> {
+  const store = getBlobStore();
+  if (!store) return null;
+  try {
+    const buffer = await store.get(getBlobFileMetaKey(filename));
+    if (!buffer) return null;
+    const parsed = JSON.parse(new TextDecoder().decode(buffer)) as Partial<BlobFileMetaRecord>;
+    if (!parsed.updatedAt && !parsed.createdAt) return null;
+    return {
+      createdAt: parsed.createdAt ?? parsed.updatedAt ?? nowIso(),
+      updatedAt: parsed.updatedAt ?? parsed.createdAt ?? nowIso(),
+      size: Number.isFinite(parsed.size) ? Number(parsed.size) : 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function writeBlobFileMeta(filename: string, meta: BlobFileMetaRecord): Promise<void> {
+  const store = getBlobStore();
+  if (!store) throw new Error('Could not write file metadata');
+  await store.set(getBlobFileMetaKey(filename), JSON.stringify(meta));
+}
+
+async function deleteBlobFileMeta(filename: string): Promise<void> {
+  const store = getBlobStore();
+  if (!store) return;
+  await store.delete(getBlobFileMetaKey(filename)).catch(() => {});
 }
 
 function ensureLocalRevisionDirs(filename: string): void {
@@ -221,6 +274,45 @@ function ensureRevision(revision: DocumentRevision): DocumentRevision {
   return {
     ...revision,
     notes: Array.isArray(revision.notes) ? revision.notes : [],
+    collaboration: ensureCollaborationState(revision.collaboration),
+  };
+}
+
+function ensureCollaborationState(
+  collaboration: Partial<CollaborationState> | undefined,
+): CollaborationState {
+  return {
+    presence: Array.isArray(collaboration?.presence) ? collaboration.presence : [],
+    lock: collaboration?.lock ?? null,
+    comments: Array.isArray(collaboration?.comments) ? collaboration.comments : [],
+    reviewRequests: Array.isArray(collaboration?.reviewRequests) ? collaboration.reviewRequests : [],
+    mentions: Array.isArray(collaboration?.mentions) ? collaboration.mentions : [],
+    notifications: Array.isArray(collaboration?.notifications) ? collaboration.notifications : [],
+    auditTrail: Array.isArray(collaboration?.auditTrail) ? collaboration.auditTrail : [],
+  };
+}
+
+function makeCollaborationId(prefix: string): string {
+  return `${prefix}-${generateRevisionId(nowIso())}`;
+}
+
+function createAuditEvent(
+  actorId: string,
+  actorName: string,
+  action: RevisionAuditEvent['action'],
+  targetType?: RevisionAuditEvent['targetType'],
+  targetId?: string,
+  metadata?: Record<string, string>,
+): RevisionAuditEvent {
+  return {
+    id: makeCollaborationId('audit'),
+    actorId,
+    actorName,
+    action,
+    targetType,
+    targetId,
+    createdAt: nowIso(),
+    metadata,
   };
 }
 
@@ -425,12 +517,21 @@ export async function appendImmutableRevision(
   const createdAt = input.createdAt ?? nowIso();
   const revisionId = generateRevisionId(createdAt);
 
+  const collaboration = ensureCollaborationState(input.collaboration);
+
   const revision: DocumentRevision = {
     id: revisionId,
     documentId,
     createdAt,
     content: input.content,
     notes: input.notes ?? [],
+    collaboration: {
+      ...collaboration,
+      auditTrail: [
+        ...collaboration.auditTrail,
+        createAuditEvent('system', 'System', 'revision-created', undefined, revisionId),
+      ],
+    },
   };
 
   if (isNetlifyRuntime) {
@@ -452,6 +553,150 @@ export async function appendImmutableRevision(
     await writeDocumentBranchState(documentId, { ...branches, draftRevisionId: revision.id });
   }
   return revision;
+}
+
+type CollaborationMutationInput = {
+  actorId: string;
+  actorName: string;
+  presence?: RevisionPresence[];
+  lock?: RevisionLock | null;
+  addComment?: {
+    message: string;
+  };
+  requestReview?: {
+    reviewerId: string;
+    reviewerName: string;
+    message?: string;
+  };
+  mention?: {
+    toUserId: string;
+    message: string;
+  };
+  markNotificationReadId?: string;
+};
+
+export async function mutateRevisionCollaboration(
+  documentId: string,
+  revisionId: string,
+  mutation: CollaborationMutationInput,
+): Promise<DocumentRevision> {
+  const revision = await getRevision(documentId, revisionId);
+  const next = ensureRevision(revision);
+
+  if (mutation.presence) {
+    next.collaboration.presence = mutation.presence;
+    next.collaboration.auditTrail.push(
+      createAuditEvent(mutation.actorId, mutation.actorName, 'presence-updated'),
+    );
+  }
+
+  if (mutation.lock !== undefined) {
+    const lockAction = mutation.lock ? 'lock-acquired' : 'lock-released';
+    next.collaboration.lock = mutation.lock;
+    next.collaboration.auditTrail.push(
+      createAuditEvent(mutation.actorId, mutation.actorName, lockAction, 'lock', mutation.lock?.userId),
+    );
+  }
+
+  if (mutation.addComment) {
+    const comment: RevisionComment = {
+      id: makeCollaborationId('comment'),
+      authorId: mutation.actorId,
+      authorName: mutation.actorName,
+      message: mutation.addComment.message,
+      createdAt: nowIso(),
+    };
+    next.collaboration.comments.push(comment);
+    next.collaboration.auditTrail.push(
+      createAuditEvent(mutation.actorId, mutation.actorName, 'comment-added', 'comment', comment.id),
+    );
+  }
+
+  if (mutation.requestReview) {
+    const reviewRequest: ReviewRequest = {
+      id: makeCollaborationId('review'),
+      requestedById: mutation.actorId,
+      requestedByName: mutation.actorName,
+      reviewerId: mutation.requestReview.reviewerId,
+      reviewerName: mutation.requestReview.reviewerName,
+      message: mutation.requestReview.message,
+      status: 'pending',
+      createdAt: nowIso(),
+    };
+    const notification: RevisionNotification = {
+      id: makeCollaborationId('notification'),
+      userId: mutation.requestReview.reviewerId,
+      type: 'review-request',
+      message: `${mutation.actorName} requested your review.`,
+      createdAt: nowIso(),
+    };
+    next.collaboration.reviewRequests.push(reviewRequest);
+    next.collaboration.notifications.push(notification);
+    next.collaboration.auditTrail.push(
+      createAuditEvent(
+        mutation.actorId,
+        mutation.actorName,
+        'review-requested',
+        'review-request',
+        reviewRequest.id,
+      ),
+    );
+  }
+
+  if (mutation.mention) {
+    const mention: RevisionMention = {
+      id: makeCollaborationId('mention'),
+      fromUserId: mutation.actorId,
+      fromDisplayName: mutation.actorName,
+      toUserId: mutation.mention.toUserId,
+      message: mutation.mention.message,
+      createdAt: nowIso(),
+    };
+    const notification: RevisionNotification = {
+      id: makeCollaborationId('notification'),
+      userId: mutation.mention.toUserId,
+      type: 'mention',
+      message: `${mutation.actorName} mentioned you: ${mutation.mention.message}`,
+      createdAt: nowIso(),
+    };
+    next.collaboration.mentions.push(mention);
+    next.collaboration.notifications.push(notification);
+    next.collaboration.auditTrail.push(
+      createAuditEvent(mutation.actorId, mutation.actorName, 'mention-added', 'mention', mention.id),
+    );
+  }
+
+  if (mutation.markNotificationReadId) {
+    next.collaboration.notifications = next.collaboration.notifications.map((notification) => {
+      if (notification.id !== mutation.markNotificationReadId || notification.readAt) {
+        return notification;
+      }
+      return {
+        ...notification,
+        readAt: nowIso(),
+      };
+    });
+    next.collaboration.auditTrail.push(
+      createAuditEvent(
+        mutation.actorId,
+        mutation.actorName,
+        'notification-read',
+        'notification',
+        mutation.markNotificationReadId,
+      ),
+    );
+  }
+
+  if (isNetlifyRuntime) {
+    const store = getBlobStore();
+    if (!store) throw new Error('Could not update collaboration state');
+    await store.set(documentRevisionBlobKey(documentId, revisionId), JSON.stringify(next, null, 2));
+    return next;
+  }
+
+  const revisionPath = path.join(getDocumentRevisionsDirPath(documentId), `${revisionId}.json`);
+  fs.writeFileSync(revisionPath, JSON.stringify(next, null, 2), 'utf8');
+  return next;
 }
 
 // API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
@@ -680,24 +925,29 @@ export async function listFiles(): Promise<FileEntry[]> {
     const store = getBlobStore();
     if (!store) return [];
     const { blobs } = await store.list();
-    const files = blobs
+    const files = await Promise.all(
+      blobs
       .filter(
         (blob) =>
           blob.key.endsWith('.md') &&
           !blob.key.startsWith('__revisions__/') &&
+          !blob.key.startsWith('__filemeta__/') &&
           !blob.key.startsWith('documents/') &&
           VALID_FILENAME.test(blob.key),
       )
-      .map((blob) => ({
-        name: blob.key,
-        mtime: new Date().toISOString(),
-        ctime: new Date().toISOString(),
+      .map(async (blob) => {
+        const meta = await readBlobFileMeta(blob.key);
+        const fallback = nowIso();
+        return {
+          name: blob.key,
+          mtime: meta?.updatedAt ?? fallback,
+          ctime: meta?.createdAt ?? fallback,
+          size: meta?.size ?? 0,
+        };
+      }),
+    );
 
-        size: 0,
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-
-    return files;
+    return files.sort((a, b) => a.name.localeCompare(b.name));
   }
 
   const dir = getNotesDir();
@@ -765,6 +1015,9 @@ export async function writeFile(filename: string, content: string): Promise<void
     const store = getBlobStore();
     if (!store) throw new Error('Could not create file');
     await store.set(key, content);
+    const previousMeta = await readBlobFileMeta(filename);
+    const size = Buffer.byteLength(content, 'utf-8');
+    await writeBlobFileMeta(filename, buildBlobFileMetaRecord(previousMeta, size));
   } else {
     const filePath = key;
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -834,6 +1087,7 @@ export async function deleteFile(filename: string): Promise<void> {
     const existing = await store.get(key);
     if (!existing) throw Object.assign(new Error('File not found'), { status: 404 });
     await store.delete(key);
+    await deleteBlobFileMeta(filename);
     await removeRevisionData(filename);
     await removeDocumentData(filename);
     return;
@@ -860,8 +1114,12 @@ export async function renameFile(oldName: string, newName: string): Promise<void
     if (newExists) throw Object.assign(new Error('File already exists'), { status: 409 });
     const content = typeof existing === 'string' ? existing : new TextDecoder().decode(existing as ArrayBuffer);
     await store.set(newKey, content);
+    const previousMeta = await readBlobFileMeta(oldName);
+    const size = Buffer.byteLength(content, 'utf-8');
+    await writeBlobFileMeta(newName, buildBlobFileMetaRecord(previousMeta, size));
     await copyRevisionData(oldName, newName);
     await store.delete(oldKey);
+    await deleteBlobFileMeta(oldName);
     await removeRevisionData(oldName);
   } else {
     const oldPath = oldKey;

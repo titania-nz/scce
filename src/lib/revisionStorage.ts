@@ -23,11 +23,25 @@ function getRevisionBlobKey(filename: string): string {
 
 // Helper function: keeps a small, testable transformation isolated from UI side effects.
 function normalizeRevision(revision: Revision): Revision {
+  const normalizedInlineNotes = Array.isArray(revision.inlineNotes)
+    ? revision.inlineNotes
+        .filter((note) => note && typeof note.message === 'string')
+        .map((note) => ({
+          id: note.id,
+          message: note.message.trim(),
+          lineNumber: typeof note.lineNumber === 'number' && Number.isFinite(note.lineNumber) && note.lineNumber > 0
+            ? Math.floor(note.lineNumber)
+            : null,
+          createdAt: note.createdAt,
+        }))
+    : [];
+
   return {
     ...revision,
     tags: revision.tags?.filter(Boolean) ?? [],
     note: revision.note?.trim() ?? '',
     status: revision.status,
+    inlineNotes: normalizedInlineNotes,
   };
 }
 

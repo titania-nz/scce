@@ -4,6 +4,12 @@ import { useState, FormEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense } from 'react';
 
+function resolveSafeRedirectPath(from: string | null): string {
+  if (!from || !from.startsWith('/')) return '/';
+  if (from.startsWith('//')) return '/';
+  return from;
+}
+
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -24,7 +30,7 @@ function LoginForm() {
       });
 
       if (res.ok) {
-        const from = searchParams.get('from') ?? '/';
+        const from = resolveSafeRedirectPath(searchParams.get('from'));
         router.push(from);
         router.refresh();
       } else {
