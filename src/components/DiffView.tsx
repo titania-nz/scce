@@ -4,12 +4,19 @@ import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { diffLines, Change } from 'diff';
 import { DiffLine, DiffHunk, buildPreparedDiff } from '@/lib/diffUtils';
 
+export type HunkMergeState = 'unresolved' | 'takeA' | 'takeB' | 'edited';
+
 interface DiffViewProps {
   contentA: string;
   contentB: string;
   filenameA: string;
   filenameB: string;
-  onMergeStateChange?: (state: { mergedContent: string; unresolvedCount: number }) => void;
+  mergeStateByHunk?: Record<number, HunkMergeState>;
+  editedContentByHunk?: Record<number, string>;
+  onTakeA?: (hunkId: number) => void;
+  onTakeB?: (hunkId: number) => void;
+  onEditHunk?: (hunkId: number) => void;
+  onEditedContentChange?: (hunkId: number, value: string) => void;
   actionLabel?: string;
   actionHint?: string;
   actionDisabled?: boolean;
@@ -47,45 +54,78 @@ function HunkBlock({
   hunk,
   total,
   isActive,
-  resolution,
-  onResolve,
+  mergeState = 'unresolved',
+  editedContent = '',
+  onTakeA,
+  onTakeB,
+  onEditHunk,
+  onEditedContentChange,
   hunkRef,
 }: {
   hunk: DiffHunk;
   total: number;
   isActive: boolean;
-  resolution?: 'a' | 'b';
-  onResolve: (resolution: 'a' | 'b') => void;
+  mergeState?: HunkMergeState;
+  editedContent?: string;
+  onTakeA?: (hunkId: number) => void;
+  onTakeB?: (hunkId: number) => void;
+  onEditHunk?: (hunkId: number) => void;
+  onEditedContentChange?: (hunkId: number, value: string) => void;
   hunkRef: (el: HTMLDivElement | null) => void;
 }) {
+  const isResolved = mergeState !== 'unresolved';
+
   return (
     <div ref={hunkRef}>
       <div
         className={`flex items-center px-3 py-0.5 text-xs font-mono text-gray-500 bg-gray-900 border-y border-gray-700 ${isActive ? 'border-l-2 border-l-blue-500' : ''}`}
       >
-        <span className="flex-1">
+        <span>
           @@ hunk {hunk.id + 1} of {total} @@
         </span>
-        <div className="flex items-center gap-1">
+        <span
+          className={`ml-3 rounded px-2 py-0.5 text-[11px] ${isResolved ? 'bg-green-950 text-green-300' : 'bg-yellow-950 text-yellow-300'}`}
+        >
+          {isResolved ? 'Resolved' : 'Unresolved'}
+        </span>
+        <div className="ml-auto flex items-center gap-1">
           <button
-            onClick={() => onResolve('a')}
-            className={`px-2 py-0.5 rounded border ${resolution === 'a' ? 'border-blue-400 text-blue-300 bg-blue-950/60' : 'border-gray-600 text-gray-300 hover:bg-gray-800'}`}
-            title="Use A side for this hunk"
+            onClick={() => onTakeA?.(hunk.id)}
+            className={`rounded px-2 py-0.5 text-[11px] transition-colors ${mergeState === 'takeA' ? 'bg-blue-700 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}
+            title="Use A-side changes for this hunk"
           >
-            Use A
+            Take A
           </button>
           <button
-            onClick={() => onResolve('b')}
-            className={`px-2 py-0.5 rounded border ${resolution === 'b' ? 'border-blue-400 text-blue-300 bg-blue-950/60' : 'border-gray-600 text-gray-300 hover:bg-gray-800'}`}
-            title="Use B side for this hunk"
+            onClick={() => onTakeB?.(hunk.id)}
+            className={`rounded px-2 py-0.5 text-[11px] transition-colors ${mergeState === 'takeB' ? 'bg-blue-700 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}
+            title="Use B-side changes for this hunk"
           >
-            Use B
+            Take B
+          </button>
+          <button
+            onClick={() => onEditHunk?.(hunk.id)}
+            className={`rounded px-2 py-0.5 text-[11px] transition-colors ${mergeState === 'edited' ? 'bg-purple-700 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}
+            title="Edit merged content for this hunk"
+          >
+            Edit merged result
           </button>
         </div>
       </div>
       {hunk.lines.map((line, i) => (
         <DiffLineRow key={i} line={line} />
       ))}
+      {mergeState === 'edited' && (
+        <div className="border-b border-gray-700 bg-gray-900 px-3 py-2">
+          <label className="mb-1 block text-[11px] font-medium text-gray-400">Edited merged content for this hunk</label>
+          <textarea
+            className="h-24 w-full resize-y rounded border border-gray-700 bg-gray-950 px-2 py-1 font-mono text-xs text-gray-200 focus:border-blue-500 focus:outline-none"
+            value={editedContent}
+            onChange={(e) => onEditedContentChange?.(hunk.id, e.target.value)}
+            placeholder="Enter merged content for this hunk..."
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -96,7 +136,12 @@ export default function DiffView({
   contentB,
   filenameA,
   filenameB,
-  onMergeStateChange,
+  mergeStateByHunk,
+  editedContentByHunk,
+  onTakeA,
+  onTakeB,
+  onEditHunk,
+  onEditedContentChange,
   actionLabel,
   actionHint,
   actionDisabled = false,
@@ -240,8 +285,12 @@ export default function DiffView({
               hunk={hunk}
               total={hunks.length}
               isActive={hunk.id === activeIdx}
-              resolution={resolutions[hunk.id]}
-              onResolve={(resolution) => setResolutions((prev) => ({ ...prev, [hunk.id]: resolution }))}
+              mergeState={mergeStateByHunk?.[hunk.id] ?? 'unresolved'}
+              editedContent={editedContentByHunk?.[hunk.id] ?? ''}
+              onTakeA={onTakeA}
+              onTakeB={onTakeB}
+              onEditHunk={onEditHunk}
+              onEditedContentChange={onEditedContentChange}
               hunkRef={setHunkRef(hunk.id)}
             />
           ))
