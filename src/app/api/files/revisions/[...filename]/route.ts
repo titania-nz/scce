@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { parseFilename } from '@/lib/parseFilename';
 import { readRevisions, writeRevisions } from '@/lib/revisionStorage';
-import { parseFilename } from '@/lib/parseFilename';
 import { RevisionInlineNote } from '@/types';
 
 type Params = { params: Promise<{ filename: string[] }> };

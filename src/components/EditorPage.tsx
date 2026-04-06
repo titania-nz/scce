@@ -10,11 +10,10 @@ import DocumentDashboard from './DocumentDashboard';
 import { useFileContent } from '@/hooks/useFileContent';
 import { useAutoSave } from '@/hooks/useAutoSave';
 import { useDocuments } from '@/hooks/useDocuments';
-import type { Revision, RevisionInlineNote } from '@/types';
+import type { PublishHistoryEntry, PublishTargetProfile, Revision, RevisionInlineNote } from '@/types';
 import { RevisionStatus } from '@/types';
 import { useFiles } from '@/hooks/useFiles';
 import { buildFileApiPath } from '@/lib/fileApiPath';
-import { RevisionStatus } from '@/types';
 
 // CodeMirror accesses browser APIs — must be dynamically imported with ssr:false
 const EditorPane = dynamic(() => import('./EditorPane'), { ssr: false });
@@ -154,6 +153,8 @@ function eventToShortcut(event: KeyboardEvent): string {
   if (event.metaKey || event.ctrlKey) parts.push('Mod');
   parts.push(key);
   return parts.join('+');
+}
+
 const LOCAL_DRAFT_KEY = 'scce:working-drafts:v1';
 const LOCAL_QUEUE_KEY = 'scce:checkpoint-queue:v1';
 
@@ -206,7 +207,6 @@ export default function EditorPage() {
   const [inlineNoteMessage, setInlineNoteMessage] = useState('');
   const [inlineNoteLine, setInlineNoteLine] = useState('');
   const [timelineError, setTimelineError] = useState<string | null>(null);
-  const { files } = useFiles();
   const [workingDraftByFile, setWorkingDraftByFile] = useState<Record<string, string>>({});
   const [lastCheckpointAtByFile, setLastCheckpointAtByFile] = useState<Record<string, string>>({});
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
@@ -217,7 +217,6 @@ export default function EditorPage() {
   const [backlinks, setBacklinks] = useState<string[]>([]);
   const commandInputRef = useRef<HTMLInputElement>(null);
 
-  const { content: loadedContent, revisions, isLoading, saveContent } = useFileContent(selectedFile);
   const [isOffline, setIsOffline] = useState(false);
   const [queuedCheckpoints, setQueuedCheckpoints] = useState<QueuedCheckpoint[]>([]);
   const [recoverableDrafts, setRecoverableDrafts] = useState<Record<string, string>>({});
@@ -227,18 +226,12 @@ export default function EditorPage() {
   const [opsError, setOpsError] = useState<string | null>(null);
   const hasLoadedLocalStateRef = useRef(false);
 
-  const { content: loadedContent, revisions, isLoading, saveContent } = useFileContent(selectedFile);
   const [publishProfiles, setPublishProfiles] = useState<PublishTargetProfile[]>([]);
   const [publishProfileId, setPublishProfileId] = useState('docs-site');
   const [publishHistory, setPublishHistory] = useState<PublishHistoryEntry[]>([]);
   const [latestRevisionStatus, setLatestRevisionStatus] = useState<RevisionStatus | ''>('');
   const [isPublishing, setIsPublishing] = useState(false);
   const [publishMessage, setPublishMessage] = useState<string>('');
-  const [activeRevisionId, setActiveRevisionId] = useState<string | null>(null);
-  const [selectedRevisionIds, setSelectedRevisionIds] = useState<string[]>([]);
-  const [timelineError, setTimelineError] = useState<string | null>(null);
-  const [inlineNoteMessage, setInlineNoteMessage] = useState('');
-  const [inlineNoteLine, setInlineNoteLine] = useState<string>('');
   const [jumpToHeadingToken, setJumpToHeadingToken] = useState<string>('');
   const [fileFilter, setFileFilter] = useState({ chapterSearch: '', metaSearch: '', dateFrom: '', dateTo: '' });
 
@@ -366,6 +359,8 @@ export default function EditorPage() {
     if (!commandPaletteOpen) return;
     commandInputRef.current?.focus();
   }, [commandPaletteOpen]);
+
+  useEffect(() => {
     const initialOffline = typeof navigator !== 'undefined' ? !navigator.onLine : false;
     setIsOffline(initialOffline);
     setQueuedCheckpoints(readLocalJson<QueuedCheckpoint[]>(LOCAL_QUEUE_KEY, []));
@@ -1060,11 +1055,6 @@ export default function EditorPage() {
           </div>
         )}
 
-        {compareMode ? (
-          <CompareView
-            selectedFile={selectedFile}
-            onFileSelect={setSelectedFile}
-            onDirtyChange={setCompareHasUnsavedChanges}
         {documentMode ? (
           <DocumentDashboard
             documents={documents}
@@ -1076,7 +1066,11 @@ export default function EditorPage() {
             onSelectFile={setSelectedFile}
           />
         ) : compareMode ? (
-          <CompareView selectedFile={selectedFile} onFileSelect={setSelectedFile} />
+          <CompareView
+            selectedFile={selectedFile}
+            onFileSelect={setSelectedFile}
+            onDirtyChange={setCompareHasUnsavedChanges}
+          />
         ) : !selectedFile ? (
           <div className="flex-1 flex flex-col items-center justify-center text-gray-500 gap-3">
             <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1342,14 +1336,6 @@ export default function EditorPage() {
               <button
                 onClick={() => setShortcutEditorOpen(false)}
                 className="text-xs px-2 py-1 rounded bg-gray-800 hover:bg-gray-700"
-      {showRecoveryPanel && (
-        <div className="fixed inset-0 z-40 bg-black/55 flex items-center justify-center p-4">
-          <div className="w-full max-w-2xl bg-gray-900 border border-gray-700 rounded-lg shadow-xl">
-            <div className="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-gray-100">Restore unsaved drafts</h2>
-              <button
-                className="text-xs text-gray-400 hover:text-gray-200"
-                onClick={() => setShowRecoveryPanel(false)}
               >
                 Close
               </button>
@@ -1374,6 +1360,21 @@ export default function EditorPage() {
               Reset defaults
             </button>
           </div>
+        </div>
+      )}
+
+      {showRecoveryPanel && (
+        <div className="fixed inset-0 z-40 bg-black/55 flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl bg-gray-900 border border-gray-700 rounded-lg shadow-xl">
+            <div className="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-gray-100">Restore unsaved drafts</h2>
+              <button
+                className="text-xs text-gray-400 hover:text-gray-200"
+                onClick={() => setShowRecoveryPanel(false)}
+              >
+                Close
+              </button>
+            </div>
             <div className="p-4 space-y-2 max-h-[70vh] overflow-y-auto">
               {Object.keys(recoverableDrafts).length === 0 ? (
                 <p className="text-xs text-gray-400">No recoverable drafts found from previous sessions.</p>
