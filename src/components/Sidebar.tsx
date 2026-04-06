@@ -253,9 +253,9 @@ export default function Sidebar({
   const [selectedHeading, setSelectedHeading] = useState('');
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
-  const [savedFilters, setSavedFilters] = useState<Array<{ id: string; name: string; chapterSearch: string; metaSearch: string; dateFrom: string; dateTo: string }>>([]);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [savedFilters, setSavedFilters] = useState<Array<{ id: string; name: string; filter: any }>>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const renamingInFlightRef = useRef(false);
 
   function getCurrentWeekRange() {
     const now = new Date();
