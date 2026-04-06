@@ -6,7 +6,7 @@ type Params = { params: Promise<{ filename: string }> };
 export async function GET(_request: NextRequest, { params }: Params) {
   const { filename } = await params;
   try {
-    const content = readFile(filename);
+    const content = await readFile(filename);
     return NextResponse.json({ name: filename, content });
   } catch (err: unknown) {
     const e = err as { status?: number; message?: string };
@@ -27,7 +27,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
       if (!newName || typeof newName !== 'string') {
         return NextResponse.json({ error: 'Invalid new filename' }, { status: 400 });
       }
-      renameFile(filename, newName);
+      await renameFile(filename, newName);
       return NextResponse.json({ name: newName });
     } else if ('content' in body) {
       // Save operation
@@ -35,7 +35,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
       if (typeof content !== 'string') {
         return NextResponse.json({ error: 'Invalid content' }, { status: 400 });
       }
-      writeFile(filename, content);
+      await writeFile(filename, content);
       return NextResponse.json({ name: filename });
     } else {
       return NextResponse.json({ error: 'Missing content or newName' }, { status: 400 });
@@ -52,7 +52,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
 export async function DELETE(_request: NextRequest, { params }: Params) {
   const { filename } = await params;
   try {
-    deleteFile(filename);
+    await deleteFile(filename);
     return NextResponse.json({ success: true });
   } catch (err: unknown) {
     const e = err as { status?: number; message?: string };
