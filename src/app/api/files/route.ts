@@ -3,7 +3,7 @@ import { listFiles, writeFile, fileExists } from '@/lib/fileStorage';
 
 export async function GET() {
   try {
-    const files = listFiles();
+    const files = await listFiles();
     return NextResponse.json({ files });
   } catch {
     return NextResponse.json({ error: 'Could not read notes directory' }, { status: 500 });
@@ -21,11 +21,11 @@ export async function POST(request: NextRequest) {
     if (!name.endsWith('.md')) {
       return NextResponse.json({ error: 'Filename must end with .md' }, { status: 400 });
     }
-    if (fileExists(name)) {
+    if (await fileExists(name)) {
       return NextResponse.json({ error: 'File already exists' }, { status: 409 });
     }
 
-    writeFile(name, content);
+    await writeFile(name, content);
     return NextResponse.json({ name }, { status: 201 });
   } catch (err: unknown) {
     const e = err as { status?: number; message?: string };
