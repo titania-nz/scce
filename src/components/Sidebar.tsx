@@ -704,19 +704,6 @@ export default function Sidebar({
     setCollapsedChapters((prev) => ({ ...prev, [key]: !prev[key] }));
   }
 
-  function applyFilter({ chapterSearch, metaSearch, dateFrom, dateTo }: { chapterSearch: string; metaSearch: string; dateFrom: string; dateTo: string }) {
-    setChapterSearch(chapterSearch);
-    setMetaSearch(metaSearch);
-    setDateFrom(dateFrom);
-    setDateTo(dateTo);
-  }
-
-  function saveCurrentFilter() {
-    const name = `Filter ${new Date().toLocaleString()}`;
-    const filter = { id: crypto.randomUUID(), name, chapterSearch, metaSearch, dateFrom, dateTo };
-    setSavedFilters((prev) => [...prev, filter]);
-  }
-
   function handleJumpToHeading() {
     if (!selectedHeading) return;
     onJumpToHeading(selectedHeading);
