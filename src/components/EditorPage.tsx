@@ -89,6 +89,7 @@ export default function EditorPage() {
     isDirty,
     saveFn: async (c) => {
       await saveContent(c, { note: revisionNote, tags: parsedTags, status: status || undefined });
+    },
     saveWorkingCopyFn: saveWorkingCopy,
     saveCheckpointFn: async (checkpointContent) => {
       if (!selectedFile) return;
