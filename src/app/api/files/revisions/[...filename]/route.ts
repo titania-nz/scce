@@ -3,6 +3,7 @@ import { listRevisions } from '@/lib/fileStorage';
 import { parseFilename } from '@/lib/parseFilename';
 
 type Params = { params: Promise<{ filename: string[] }> };
+// Keep revision storage imports centralized via fileStorage/listRevisions to avoid duplicate bindings.
 
 // API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function GET(_request: Request, { params }: Params) {
