@@ -1,13 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { promoteRevisionToDraft } from '@/lib/fileStorage';
 
-type Params = { params: Promise<{ filename: string }> };
+type Params = { params: Promise<{ filename: string[] }> };
+
+function parseFilename(segments: string[]): string {
+  const filename = segments.join('/');
+  if (!filename) {
+    throw Object.assign(new Error('Invalid filename'), { status: 400 });
+  }
+  return filename;
+}
 
 // API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function POST(request: NextRequest, { params }: Params) {
-  const { filename } = await params;
-
   try {
+    const { filename: rawFilename } = await params;
+    const filename = parseFilename(rawFilename);
     const body = await request.json();
     const { revisionId } = body;
 
