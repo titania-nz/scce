@@ -518,10 +518,6 @@ export async function listFiles(): Promise<FileEntry[]> {
       }),
     );
 
-        size: 0,
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-
     const result: FileEntry[] = [];
     for (const file of files) {
       const size = await migrateLegacyFileToInitialRevision(file.name);

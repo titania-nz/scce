@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { COOKIE_NAME, COOKIE_OPTIONS } from './cookie';
-import { createAuthToken, getAuthThrottleStatus, recordAuthFailure } from '@/lib/authThrottle';
+import { getAuthThrottleStatus, recordAuthFailure } from '@/lib/authThrottle';
+import { createAuthToken } from '@/lib/authToken';
 
 const GENERIC_AUTH_ERROR = 'Invalid credentials';
 
