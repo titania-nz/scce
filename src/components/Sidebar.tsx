@@ -13,10 +13,12 @@ interface SidebarProps {
   onJumpToHeading: (heading: string) => void;
 }
 
-interface RevisionMeta {
-  tags: string[];
-  note: string;
-  status: string;
+type RevisionMeta = RevisionMetaSummary;
+
+interface FileEntryWithMeta extends FileEntry {
+  tags?: string[];
+  note?: string;
+  status?: string;
 }
 
 interface RevisionItem {
@@ -70,6 +72,7 @@ const DEFAULT_META: RevisionMeta = {
   note: '',
   status: '',
 };
+const SAVED_FILTERS_STORAGE_KEY = 'scce.savedSidebarFilters';
 
 // Helper function: keeps a small, testable transformation isolated from UI side effects.
 function formatDate(value: string | undefined): string {
@@ -96,83 +99,6 @@ function makeUploadFilename(originalName: string, takenNames: Set<string>): stri
   }
   takenNames.add(candidate);
   return candidate;
-}
-
-// Helper function: keeps a small, testable transformation isolated from UI side effects.
-function splitFrontmatter(content: string): { frontmatter: string; body: string } {
-  if (!content.startsWith('---\n')) {
-    return { frontmatter: '', body: content };
-  }
-
-  const endMarkerIndex = content.indexOf('\n---\n', 4);
-  if (endMarkerIndex === -1) {
-    return { frontmatter: '', body: content };
-  }
-
-  return {
-    frontmatter: content.slice(4, endMarkerIndex),
-    body: content.slice(endMarkerIndex + 5),
-  };
-}
-
-// Helper function: keeps a small, testable transformation isolated from UI side effects.
-function parseMetaFromContent(content: string): RevisionMeta {
-  if (!content) return DEFAULT_META;
-  const { frontmatter, body } = splitFrontmatter(content);
-
-  const tags = new Set<string>();
-  let note = '';
-  let status = '';
-
-  if (frontmatter) {
-    const lines = frontmatter.split('\n');
-    for (const line of lines) {
-      const [rawKey, ...valueParts] = line.split(':');
-      if (!rawKey || valueParts.length === 0) continue;
-      const key = rawKey.trim().toLowerCase();
-      const rawValue = valueParts.join(':').trim();
-      if (!rawValue) continue;
-
-      if (key === 'status') {
-        status = rawValue.replace(/^["']|["']$/g, '').toLowerCase();
-      }
-
-      if (key === 'note' || key === 'summary') {
-        note = rawValue.replace(/^["']|["']$/g, '');
-      }
-
-      if (key === 'tag' || key === 'tags') {
-        const cleaned = rawValue.replace(/^\[|\]$/g, '');
-        cleaned
-          .split(',')
-          .map((tag) => tag.trim().replace(/^["']|["']$/g, ''))
-          .filter(Boolean)
-          .forEach((tag) => tags.add(tag.toLowerCase()));
-      }
-    }
-  }
-
-  if (!note) {
-    const firstBodyLine = body
-      .split('\n')
-      .map((line) => line.trim())
-      .find((line) => line.length > 0 && !line.startsWith('#'));
-    note = firstBodyLine ? firstBodyLine.slice(0, 120) : '';
-  }
-
-  if (tags.size === 0) {
-    const tagMatches = body.match(/(^|\s)#([a-zA-Z0-9_-]+)/g) ?? [];
-    tagMatches.forEach((match) => {
-      const tag = match.trim().replace(/^#/, '').toLowerCase();
-      if (tag) tags.add(tag);
-    });
-  }
-
-  return {
-    tags: Array.from(tags),
-    note,
-    status,
-  };
 }
 
 // Helper function: keeps a small, testable transformation isolated from UI side effects.
@@ -794,6 +720,57 @@ export default function Sidebar({
       </div>
 
       <div className="px-3 py-2 border-b border-gray-700 space-y-2">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => applyFilter({ chapterSearch: '', metaSearch: 'needs review', dateFrom: '', dateTo: '' })}
+            className="text-[11px] px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-100"
+          >
+            My review queue
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const { from, to } = getCurrentWeekRange();
+              applyFilter({ chapterSearch: '', metaSearch: 'needs review', dateFrom: from, dateTo: to });
+            }}
+            className="text-[11px] px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-100"
+          >
+            Needs review this week
+          </button>
+          <button
+            type="button"
+            onClick={saveCurrentFilter}
+            className="text-[11px] px-2 py-1 rounded bg-blue-700 hover:bg-blue-600 text-white"
+          >
+            Save current filter
+          </button>
+        </div>
+
+        {savedFilters.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {savedFilters.map((filter) => (
+              <div key={filter.id} className="inline-flex items-center rounded border border-gray-600 overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => applyFilter(filter)}
+                  className="text-[11px] px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-100"
+                >
+                  {filter.name}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSavedFilters((prev) => prev.filter((item) => item.id !== filter.id))}
+                  className="text-[11px] px-1.5 py-1 bg-gray-700 hover:bg-red-700 text-gray-300"
+                  aria-label={`Delete saved filter ${filter.name}`}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <input
           type="text"
           value={globalQuery}
