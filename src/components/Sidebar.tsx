@@ -44,6 +44,7 @@ const DEFAULT_META: RevisionMeta = {
   status: '',
 };
 
+// Helper function: keeps a small, testable transformation isolated from UI side effects.
 function formatDate(value: string | undefined): string {
   if (!value) return '-';
   const date = new Date(value);
@@ -55,12 +56,14 @@ function formatDate(value: string | undefined): string {
   }).format(date);
 }
 
+// Helper function: keeps a small, testable transformation isolated from UI side effects.
 function formatSize(size: number): string {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+// Helper function: keeps a small, testable transformation isolated from UI side effects.
 function splitFrontmatter(content: string): { frontmatter: string; body: string } {
   if (!content.startsWith('---\n')) {
     return { frontmatter: '', body: content };
@@ -77,6 +80,7 @@ function splitFrontmatter(content: string): { frontmatter: string; body: string 
   };
 }
 
+// Helper function: keeps a small, testable transformation isolated from UI side effects.
 function parseMetaFromContent(content: string): RevisionMeta {
   if (!content) return DEFAULT_META;
   const { frontmatter, body } = splitFrontmatter(content);
@@ -136,6 +140,7 @@ function parseMetaFromContent(content: string): RevisionMeta {
   };
 }
 
+// Helper function: keeps a small, testable transformation isolated from UI side effects.
 function parseFileStructure(fileName: string) {
   const normalized = fileName.replace(/^\/+/, '');
   const parts = normalized.split('/').filter(Boolean);
@@ -199,6 +204,7 @@ function parseFileStructure(fileName: string) {
   };
 }
 
+// Main component export: this is the entry point rendered by parent routes/components.
 export default function Sidebar({
   selectedFile,
   onFileSelect,

@@ -11,6 +11,7 @@ function parseFilename(segments: string[]): string {
   return filename;
 }
 
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function POST(request: NextRequest, { params }: Params) {
   try {
     const { filename: rawFilename } = await params;

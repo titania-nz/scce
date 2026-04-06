@@ -47,6 +47,7 @@ function makeRevisionId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// Helper function: keeps a small, testable transformation isolated from UI side effects.
 function parseRevisionKeyTimestamp(revisionId: string): number {
   const ts = Number(revisionId.split('-')[0]);
   return Number.isFinite(ts) ? ts : 0;
@@ -277,6 +278,7 @@ async function migrateLegacyFileToInitialRevision(filename: string): Promise<voi
   });
 }
 
+// Public hook/helper: called from UI code to encapsulate shared stateful behavior.
 export function getNotesDir(): string {
   if (isNetlifyRuntime) {
     return '';
@@ -286,6 +288,7 @@ export function getNotesDir(): string {
   return dir;
 }
 
+// Public hook/helper: called from UI code to encapsulate shared stateful behavior.
 export function resolveSafePath(filename: string): string {
   if (!filename || filename.length > MAX_FILENAME_LENGTH) {
     throw Object.assign(new Error('Invalid filename'), { status: 400 });
@@ -320,6 +323,7 @@ async function documentExists(documentId: string): Promise<boolean> {
   }
 }
 
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function createDocumentRootRecord(input: CreateDocumentInput): Promise<Document> {
   const createdAt = input.createdAt ?? nowIso();
   validateDocumentId(input.id);
@@ -347,6 +351,7 @@ export async function createDocumentRootRecord(input: CreateDocumentInput): Prom
   return document;
 }
 
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function appendImmutableRevision(
   documentId: string,
   input: CreateRevisionInput,
@@ -378,6 +383,7 @@ export async function appendImmutableRevision(
   return revision;
 }
 
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function listRevisionsByDocumentId(documentId: string): Promise<DocumentRevision[]> {
   validateDocumentId(documentId);
   await readDocumentRootRecord(documentId);
@@ -415,6 +421,7 @@ export async function listRevisionsByDocumentId(documentId: string): Promise<Doc
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function getRevision(documentId: string, revisionId: string): Promise<DocumentRevision> {
   validateDocumentId(documentId);
   if (!/^[a-zA-Z0-9_-]{8,128}$/.test(revisionId)) {
@@ -442,6 +449,7 @@ export async function getRevision(documentId: string, revisionId: string): Promi
   return ensureRevision(revision);
 }
 
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function listFiles(): Promise<FileEntry[]> {
   if (isNetlifyRuntime) {
     const store = getBlobStore();
@@ -514,6 +522,7 @@ export async function listFiles(): Promise<FileEntry[]> {
   return sortedFiles;
 }
 
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function readFile(filename: string): Promise<string> {
   await migrateLegacyFileToInitialRevision(filename);
 
@@ -544,6 +553,7 @@ export async function readFile(filename: string): Promise<string> {
   return fs.readFileSync(filePath, 'utf-8');
 }
 
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function writeFile(filename: string, content: string): Promise<void> {
   await migrateLegacyFileToInitialRevision(filename);
 
@@ -612,6 +622,7 @@ async function copyRevisionData(oldName: string, newName: string): Promise<void>
   await writeRevisionMeta(newName, meta);
 }
 
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function deleteFile(filename: string): Promise<void> {
   const key = resolveSafePath(filename);
   if (isNetlifyRuntime) {
@@ -633,6 +644,7 @@ export async function deleteFile(filename: string): Promise<void> {
   await removeRevisionData(filename);
 }
 
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function renameFile(oldName: string, newName: string): Promise<void> {
   const oldKey = resolveSafePath(oldName);
   const newKey = resolveSafePath(newName);
@@ -692,6 +704,7 @@ export async function renameFile(oldName: string, newName: string): Promise<void
   }
 }
 
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function fileExists(filename: string): Promise<boolean> {
   try {
     const key = resolveSafePath(filename);
@@ -712,6 +725,7 @@ export async function fileExists(filename: string): Promise<boolean> {
   }
 }
 
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function createRevision(
   filename: string,
   content: string,
@@ -741,6 +755,7 @@ export async function createRevision(
   return revision;
 }
 
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function ensureDraftRevision(filename: string): Promise<FileRevisionMeta> {
   resolveSafePath(filename);
   const meta = await readRevisionMeta(filename);
@@ -756,15 +771,18 @@ export async function ensureDraftRevision(filename: string): Promise<FileRevisio
   };
 }
 
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function listRevisions(filename: string): Promise<FileRevisionMeta> {
   return ensureDraftRevision(filename);
 }
 
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function readRevision(filename: string, revisionId: string): Promise<string> {
   resolveSafePath(filename);
   return readRevisionContent(filename, revisionId);
 }
 
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function getCurrentDraftContent(filename: string): Promise<{ content: string; revisionId: string | null }> {
   const meta = await ensureDraftRevision(filename);
   if (!meta.currentDraftRevisionId) {
@@ -775,6 +793,7 @@ export async function getCurrentDraftContent(filename: string): Promise<{ conten
   return { content, revisionId: meta.currentDraftRevisionId };
 }
 
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function promoteRevisionToDraft(filename: string, revisionId: string): Promise<void> {
   resolveSafePath(filename);
   const meta = await ensureDraftRevision(filename);

@@ -7,6 +7,7 @@ import {
 
 type Params = { params: Promise<{ documentId: string }> };
 
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function GET(_request: NextRequest, { params }: Params) {
   const { documentId } = await params;
 
@@ -25,6 +26,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
   }
 }
 
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function POST(request: NextRequest, { params }: Params) {
   const { documentId } = await params;
 
