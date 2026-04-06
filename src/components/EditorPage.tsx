@@ -200,7 +200,7 @@ export default function EditorPage() {
         />
 
         {compareMode ? (
-          <CompareView />
+          <CompareView selectedFile={selectedFile} onFileSelect={setSelectedFile} />
         ) : !selectedFile ? (
           <div className="flex-1 flex flex-col items-center justify-center text-gray-500 gap-3">
             <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">

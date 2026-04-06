@@ -72,6 +72,16 @@ function HunkBlock({
   );
 }
 
+export default function DiffView({
+  contentA,
+  contentB,
+  filenameA,
+  filenameB,
+  actionLabel,
+  actionHint,
+  actionDisabled = false,
+  onAction,
+}: DiffViewProps) {
 function formatRevisionHeader(revision: RevisionDescriptor) {
   return `${revision.timestampLabel} · ${revision.sourceLabel} · ${revision.noteSummary}`;
 }
@@ -142,6 +152,17 @@ export default function DiffView({ contentA, contentB, revisionA, revisionB }: D
               Next ↓
             </button>
           </div>
+        )}
+
+        {actionLabel && onAction && (
+          <button
+            onClick={onAction}
+            disabled={actionDisabled}
+            title={actionHint}
+            className="px-2 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            {actionLabel}
+          </button>
         )}
       </div>
 

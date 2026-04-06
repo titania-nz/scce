@@ -1,13 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { readFile, writeFile, deleteFile, renameFile } from '@/lib/fileStorage';
+import {
+  createRevision,
+  deleteFile,
+  getCurrentDraftContent,
+  readRevision,
+  renameFile,
+} from '@/lib/fileStorage';
 
 type Params = { params: Promise<{ filename: string }> };
 
-export async function GET(_request: NextRequest, { params }: Params) {
+export async function GET(request: NextRequest, { params }: Params) {
   const { filename } = await params;
+  const revisionId = request.nextUrl.searchParams.get('revisionId');
   try {
-    const content = await readFile(filename);
-    return NextResponse.json({ name: filename, content });
+    if (revisionId) {
+      const content = await readRevision(filename, revisionId);
+      return NextResponse.json({ name: filename, content, revisionId });
+    }
+
+    const draft = await getCurrentDraftContent(filename);
+    return NextResponse.json({
+      name: filename,
+      content: draft.content,
+      revisionId: draft.revisionId,
+      currentDraftRevisionId: draft.revisionId,
+    });
   } catch (err: unknown) {
     const e = err as { status?: number; message?: string };
     if (e.status === 404) return NextResponse.json({ error: 'File not found' }, { status: 404 });
@@ -35,8 +52,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
       if (typeof content !== 'string') {
         return NextResponse.json({ error: 'Invalid content' }, { status: 400 });
       }
-      await writeFile(filename, content);
-      return NextResponse.json({ name: filename });
+      const revision = await createRevision(filename, content, { setAsDraft: true });
+      return NextResponse.json({ name: filename, revisionId: revision.id });
     } else {
       return NextResponse.json({ error: 'Missing content or newName' }, { status: 400 });
     }
