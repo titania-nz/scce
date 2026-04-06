@@ -2,22 +2,22 @@ import { NextRequest, NextResponse } from 'next/server';
 import { readFile, writeFile, deleteFile, renameFile } from '@/lib/fileStorage';
 import { deleteRevisions, readRevisions, renameRevisions, writeRevisions } from '@/lib/revisionStorage';
 import { parseFilename } from '@/lib/parseFilename';
-import { Revision, RevisionStatus } from '@/types';
+import { Revision } from '@/types';
 
 type Params = { params: Promise<{ filename: string[] }> };
 
-const VALID_STATUSES: RevisionStatus[] = ['accepted', 'rejected', 'needs-review'];
-
 // Helper function: keeps a small, testable transformation isolated from UI side effects.
-function parseStatus(input: unknown): RevisionStatus | undefined {
+function parseStatus(input: unknown): string | undefined {
   if (input === undefined || input === null || input === '') return undefined;
   if (typeof input !== 'string') {
     throw Object.assign(new Error('Invalid status'), { status: 400 });
   }
-  if (!VALID_STATUSES.includes(input as RevisionStatus)) {
-    throw Object.assign(new Error('Invalid status'), { status: 400 });
+  const normalized = input.trim();
+  if (!normalized) return undefined;
+  if (normalized.length > 80) {
+    throw Object.assign(new Error('Status is too long'), { status: 400 });
   }
-  return input as RevisionStatus;
+  return normalized;
 }
 
 // Helper function: keeps a small, testable transformation isolated from UI side effects.
@@ -38,7 +38,22 @@ export async function GET(_request: NextRequest, { params }: Params) {
   try {
     const filename = parseFilename(rawFilename);
     const [content, revisions] = await Promise.all([readFile(filename), readRevisions(filename)]);
-    return NextResponse.json({ name: filename, content, revisions });
+    const requestUrl = _request.nextUrl;
+    const revisionId = requestUrl.searchParams.get('revisionId');
+    const selectedRevision = revisionId
+      ? revisions.find((revision) => revision.id === revisionId)
+      : null;
+
+    if (revisionId && !selectedRevision) {
+      return NextResponse.json({ error: 'Revision not found' }, { status: 404 });
+    }
+
+    return NextResponse.json({
+      name: filename,
+      content: selectedRevision?.content ?? content,
+      revisions,
+      revisionId: selectedRevision?.id ?? null,
+    });
   } catch (err: unknown) {
     const e = err as { status?: number; message?: string };
     if (e.status === 404) return NextResponse.json({ error: 'File not found' }, { status: 404 });
@@ -58,6 +73,9 @@ export async function PUT(request: NextRequest, { params }: Params) {
       const { newName } = body;
       if (!newName || typeof newName !== 'string') {
         return NextResponse.json({ error: 'Invalid new filename' }, { status: 400 });
+      }
+      if (!newName.endsWith('.md')) {
+        return NextResponse.json({ error: 'Filename must end with .md' }, { status: 400 });
       }
       await renameFile(filename, newName);
       await renameRevisions(filename, newName);

@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { COOKIE_NAME } from './app/api/auth/cookie';
+import { verifyAuthToken } from './lib/authToken';
 
 const PUBLIC_PATHS = ['/login', '/api/auth'];
 
 // Public hook/helper: called from UI code to encapsulate shared stateful behavior.
-export function proxy(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Allow public paths
@@ -11,7 +13,7 @@ export function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const token = request.cookies.get('auth-token')?.value;
+  const token = request.cookies.get(COOKIE_NAME)?.value;
   const secret = process.env.AUTH_SECRET;
 
   if (!secret) {
@@ -19,7 +21,9 @@ export function proxy(request: NextRequest) {
     return new NextResponse('AUTH_SECRET environment variable is not set.', { status: 503 });
   }
 
-  if (token !== secret) {
+  const isValidToken = token ? await verifyAuthToken(token, secret) : false;
+
+  if (!isValidToken) {
     const loginUrl = new URL('/login', request.url);
     if (pathname !== '/') {
       loginUrl.searchParams.set('from', pathname);
