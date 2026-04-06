@@ -4,8 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFiles } from '@/hooks/useFiles';
 import { FileContentResponse, FileEntry } from '@/types';
 import { buildFileApiPath } from '@/lib/fileApiPath';
-import { parseMetaFromContent } from '../lib/revisionMeta';
-import type { RevisionMetaSummary } from '../lib/revisionMeta';
+import { RevisionMetaSummary, parseMetaFromContent } from '@/lib/revisionMeta';
 
 interface SidebarProps {
   selectedFile: string | null;
@@ -75,6 +74,21 @@ const DEFAULT_META: RevisionMeta = {
   status: '',
 };
 const SAVED_FILTERS_STORAGE_KEY = 'scce.savedSidebarFilters';
+
+// Helper function: keeps a small, testable transformation isolated from UI side effects.
+function getCurrentWeekRange(): { from: string; to: string } {
+  const now = new Date();
+  const startOfWeek = new Date(now);
+  startOfWeek.setDate(now.getDate() - now.getDay());
+  startOfWeek.setHours(0, 0, 0, 0);
+  const endOfWeek = new Date(startOfWeek);
+  endOfWeek.setDate(startOfWeek.getDate() + 6);
+  endOfWeek.setHours(23, 59, 59, 999);
+  return {
+    from: startOfWeek.toISOString().slice(0, 10),
+    to: endOfWeek.toISOString().slice(0, 10),
+  };
+}
 
 // Helper function: keeps a small, testable transformation isolated from UI side effects.
 function formatDate(value: string | undefined): string {
