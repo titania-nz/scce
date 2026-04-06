@@ -89,6 +89,7 @@ export default function EditorPage() {
   const [mobileView, setMobileView] = useState<'edit' | 'preview'>('edit');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [compareMode, setCompareMode] = useState(false);
+  const [compareHasUnsavedChanges, setCompareHasUnsavedChanges] = useState(false);
   const [revisionNote, setRevisionNote] = useState('');
   const [tagsInput, setTagsInput] = useState('');
   const [status, setStatus] = useState<RevisionStatus | ''>('');
@@ -462,6 +463,17 @@ export default function EditorPage() {
     }
   }
 
+  const handleCompareToggle = useCallback(() => {
+    if (compareMode && compareHasUnsavedChanges) {
+      const shouldLeave = window.confirm('You have unsaved merged edits. Leave compare mode anyway?');
+      if (!shouldLeave) return;
+    }
+    setCompareMode((mode) => !mode);
+    if (compareMode) {
+      setCompareHasUnsavedChanges(false);
+    }
+  }, [compareHasUnsavedChanges, compareMode]);
+
   return (
     <div className="flex h-screen overflow-hidden bg-gray-950 text-gray-100">
       {sidebarOpen && (
@@ -502,11 +514,15 @@ export default function EditorPage() {
           checkpointBlockReason={missingRequiredFields.length > 0 ? `Required: ${missingRequiredFields.join(', ')}` : undefined}
           onContinueWorkingDraft={handleContinueWorkingDraft}
           onToggleSidebar={() => setSidebarOpen((o) => !o)}
-          onToggleCompare={() => setCompareMode((m) => !m)}
+          onToggleCompare={handleCompareToggle}
         />
 
         {compareMode ? (
-          <CompareView selectedFile={selectedFile} onFileSelect={setSelectedFile} />
+          <CompareView
+            selectedFile={selectedFile}
+            onFileSelect={setSelectedFile}
+            onDirtyChange={setCompareHasUnsavedChanges}
+          />
         ) : !selectedFile ? (
           <div className="flex-1 flex flex-col items-center justify-center text-gray-500 gap-3">
             <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">

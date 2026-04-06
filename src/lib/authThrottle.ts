@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import { NextRequest } from 'next/server';
 import { getStore } from '@netlify/blobs';
 import { isNetlifyRuntime } from '@/lib/netlifyRuntime';
+export { createAuthToken, verifyAuthToken } from '@/lib/authToken';
 
 interface ThrottleBucket {
   count: number;
