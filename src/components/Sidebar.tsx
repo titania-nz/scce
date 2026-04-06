@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFiles } from '@/hooks/useFiles';
 import { FileContentResponse, FileEntry } from '@/types';
 import { buildFileApiPath } from '@/lib/fileApiPath';
+import { RevisionMetaSummary, parseMetaFromContent } from '@/lib/revisionMeta';
 
 interface SidebarProps {
   selectedFile: string | null;
@@ -73,6 +74,21 @@ const DEFAULT_META: RevisionMeta = {
   status: '',
 };
 const SAVED_FILTERS_STORAGE_KEY = 'scce.savedSidebarFilters';
+
+// Helper function: keeps a small, testable transformation isolated from UI side effects.
+function getCurrentWeekRange(): { from: string; to: string } {
+  const now = new Date();
+  const startOfWeek = new Date(now);
+  startOfWeek.setDate(now.getDate() - now.getDay());
+  startOfWeek.setHours(0, 0, 0, 0);
+  const endOfWeek = new Date(startOfWeek);
+  endOfWeek.setDate(startOfWeek.getDate() + 6);
+  endOfWeek.setHours(23, 59, 59, 999);
+  return {
+    from: startOfWeek.toISOString().slice(0, 10),
+    to: endOfWeek.toISOString().slice(0, 10),
+  };
+}
 
 // Helper function: keeps a small, testable transformation isolated from UI side effects.
 function formatDate(value: string | undefined): string {
@@ -250,6 +266,7 @@ export default function Sidebar({
   const [selectedHeading, setSelectedHeading] = useState('');
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [savedFilters, setSavedFilters] = useState<Array<{ id: string; name: string; chapterSearch: string; metaSearch: string; dateFrom: string; dateTo: string }>>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -645,6 +662,19 @@ export default function Sidebar({
 
   function toggleChapter(key: string) {
     setCollapsedChapters((prev) => ({ ...prev, [key]: !prev[key] }));
+  }
+
+  function applyFilter({ chapterSearch, metaSearch, dateFrom, dateTo }: { chapterSearch: string; metaSearch: string; dateFrom: string; dateTo: string }) {
+    setChapterSearch(chapterSearch);
+    setMetaSearch(metaSearch);
+    setDateFrom(dateFrom);
+    setDateTo(dateTo);
+  }
+
+  function saveCurrentFilter() {
+    const name = `Filter ${new Date().toLocaleString()}`;
+    const filter = { id: crypto.randomUUID(), name, chapterSearch, metaSearch, dateFrom, dateTo };
+    setSavedFilters((prev) => [...prev, filter]);
   }
 
   function handleJumpToHeading() {
