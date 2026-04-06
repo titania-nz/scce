@@ -9,16 +9,21 @@ import CompareView from './CompareView';
 import DiffView from './DiffView';
 import { useFileContent } from '@/hooks/useFileContent';
 import { useAutoSave } from '@/hooks/useAutoSave';
-import { Revision, RevisionInlineNote, RevisionStatus } from '@/types';
+import { RevisionStatus } from '@/types';
+import { useFiles } from '@/hooks/useFiles';
+import { buildFileApiPath } from '@/lib/fileApiPath';
 
 // CodeMirror accesses browser APIs — must be dynamically imported with ssr:false
 const EditorPane = dynamic(() => import('./EditorPane'), { ssr: false });
 
-const STATUS_OPTIONS: Array<{ value: RevisionStatus; label: string }> = [
-  { value: 'accepted', label: 'Accepted' },
-  { value: 'rejected', label: 'Rejected' },
-  { value: 'needs-review', label: 'Needs review' },
-];
+const DEFAULT_STATUS_PIPELINE = ['Draft', 'In Review', 'Approved', 'Published'];
+const DEFAULT_REQUIRED_FIELDS = {
+  note: true,
+  status: true,
+  tags: false,
+};
+const PIPELINE_STORAGE_KEY = 'scce.statusPipeline';
+const REQUIRED_FIELDS_STORAGE_KEY = 'scce.requiredMetaFields';
 
 interface RevisionSummary {
   addedChars: number;
@@ -87,11 +92,12 @@ export default function EditorPage() {
   const [revisionNote, setRevisionNote] = useState('');
   const [tagsInput, setTagsInput] = useState('');
   const [status, setStatus] = useState<RevisionStatus | ''>('');
-  const [selectedRevisionIds, setSelectedRevisionIds] = useState<string[]>([]);
-  const [activeRevisionId, setActiveRevisionId] = useState<string | null>(null);
-  const [inlineNoteMessage, setInlineNoteMessage] = useState('');
-  const [inlineNoteLine, setInlineNoteLine] = useState('');
-  const [timelineError, setTimelineError] = useState<string | null>(null);
+  const [statusPipeline, setStatusPipeline] = useState<string[]>(DEFAULT_STATUS_PIPELINE);
+  const [statusPipelineInput, setStatusPipelineInput] = useState(DEFAULT_STATUS_PIPELINE.join(' → '));
+  const [requiredFields, setRequiredFields] = useState(DEFAULT_REQUIRED_FIELDS);
+  const [checkpointWarning, setCheckpointWarning] = useState<string | null>(null);
+  const [knownTags, setKnownTags] = useState<string[]>([]);
+  const { files } = useFiles();
   const [workingDraftByFile, setWorkingDraftByFile] = useState<Record<string, string>>({});
   const [lastCheckpointAtByFile, setLastCheckpointAtByFile] = useState<Record<string, string>>({});
 
@@ -102,6 +108,97 @@ export default function EditorPage() {
     () => tagsInput.split(',').map((tag) => tag.trim()).filter(Boolean),
     [tagsInput],
   );
+  const statusOptions = useMemo(
+    () => statusPipeline.map((value) => ({ value, label: value })),
+    [statusPipeline],
+  );
+  const missingRequiredFields = useMemo(() => {
+    const missing: string[] = [];
+    if (requiredFields.note && revisionNote.trim().length === 0) missing.push('Note');
+    if (requiredFields.status && status.trim().length === 0) missing.push('Status');
+    if (requiredFields.tags && parsedTags.length === 0) missing.push('At least one tag');
+    return missing;
+  }, [parsedTags.length, requiredFields.note, requiredFields.status, requiredFields.tags, revisionNote, status]);
+
+  useEffect(() => {
+    const rawPipeline = window.localStorage.getItem(PIPELINE_STORAGE_KEY);
+    if (rawPipeline) {
+      try {
+        const parsed = JSON.parse(rawPipeline) as string[];
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const cleaned = parsed.map((item) => item.trim()).filter(Boolean).slice(0, 12);
+          if (cleaned.length > 0) {
+            setStatusPipeline(cleaned);
+            setStatusPipelineInput(cleaned.join(' → '));
+          }
+        }
+      } catch {
+        // noop
+      }
+    }
+
+    const rawRequired = window.localStorage.getItem(REQUIRED_FIELDS_STORAGE_KEY);
+    if (rawRequired) {
+      try {
+        const parsed = JSON.parse(rawRequired) as Partial<typeof DEFAULT_REQUIRED_FIELDS>;
+        setRequiredFields((prev) => ({
+          note: typeof parsed.note === 'boolean' ? parsed.note : prev.note,
+          status: typeof parsed.status === 'boolean' ? parsed.status : prev.status,
+          tags: typeof parsed.tags === 'boolean' ? parsed.tags : prev.tags,
+        }));
+      } catch {
+        // noop
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(PIPELINE_STORAGE_KEY, JSON.stringify(statusPipeline));
+  }, [statusPipeline]);
+
+  useEffect(() => {
+    window.localStorage.setItem(REQUIRED_FIELDS_STORAGE_KEY, JSON.stringify(requiredFields));
+  }, [requiredFields]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadKnownTags() {
+      if (files.length === 0) {
+        if (!cancelled) setKnownTags([]);
+        return;
+      }
+
+      const tagSet = new Set<string>();
+      await Promise.all(
+        files.map(async (file) => {
+          try {
+            const res = await fetch(buildFileApiPath(file.name));
+            if (!res.ok) return;
+            const payload = (await res.json()) as { revisions?: Array<{ tags?: string[] }> };
+            payload.revisions?.forEach((revision) => {
+              revision.tags?.forEach((tag) => {
+                const cleaned = tag.trim().toLowerCase();
+                if (cleaned) tagSet.add(cleaned);
+              });
+            });
+          } catch {
+            // noop
+          }
+        }),
+      );
+
+      if (!cancelled) {
+        setKnownTags(Array.from(tagSet).sort((a, b) => a.localeCompare(b)));
+      }
+    }
+
+    void loadKnownTags();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [files]);
 
   const saveWorkingCopy = useCallback(async (draftContent: string) => {
     if (!selectedFile) return;
@@ -181,6 +278,7 @@ export default function EditorPage() {
       setIsDirty(false);
     },
   });
+  const canSaveCheckpoint = isDirty && !isSaving && missingRequiredFields.length === 0;
 
   function handleContentChange(val: string) {
     setContent(val);
@@ -189,8 +287,13 @@ export default function EditorPage() {
 
   const handleSaveCheckpoint = useCallback(async () => {
     if (!selectedFile || !isDirty) return;
+    if (missingRequiredFields.length > 0) {
+      setCheckpointWarning(`Complete required fields: ${missingRequiredFields.join(', ')}`);
+      return;
+    }
+    setCheckpointWarning(null);
     await saveNow(content);
-  }, [content, isDirty, selectedFile, saveNow]);
+  }, [content, isDirty, missingRequiredFields, saveNow, selectedFile]);
 
   const handleContinueWorkingDraft = useCallback(async () => {
     await saveWorkingCopy(content);
@@ -226,6 +329,7 @@ export default function EditorPage() {
       setRevisionNote('');
       setTagsInput('');
       setStatus('');
+      setCheckpointWarning(null);
     }
 
     setWorkingDraftByFile((prev) => {
@@ -339,6 +443,19 @@ export default function EditorPage() {
     setActiveRevisionId(revisionId);
   }
 
+  function applyStatusPipelineInput() {
+    const next = statusPipelineInput
+      .split(/->|→/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .slice(0, 12);
+    if (next.length === 0) return;
+    setStatusPipeline(next);
+    if (status && !next.includes(status)) {
+      setStatus(next[0]);
+    }
+  }
+
   return (
     <div className="flex h-screen overflow-hidden bg-gray-950 text-gray-100">
       {sidebarOpen && (
@@ -374,6 +491,8 @@ export default function EditorPage() {
           compareMode={compareMode}
           onMobileViewChange={setMobileView}
           onSaveCheckpoint={handleSaveCheckpoint}
+          canSaveCheckpoint={canSaveCheckpoint}
+          checkpointBlockReason={missingRequiredFields.length > 0 ? `Required: ${missingRequiredFields.join(', ')}` : undefined}
           onContinueWorkingDraft={handleContinueWorkingDraft}
           onToggleSidebar={() => setSidebarOpen((o) => !o)}
           onToggleCompare={() => setCompareMode((m) => !m)}
@@ -412,6 +531,25 @@ export default function EditorPage() {
                 <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Revision details</h2>
 
                 <label className="block text-xs text-gray-300">
+                  Status pipeline
+                  <div className="mt-1 flex gap-1.5">
+                    <input
+                      className="flex-1 bg-gray-800 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-100"
+                      value={statusPipelineInput}
+                      onChange={(e) => setStatusPipelineInput(e.target.value)}
+                      placeholder="Draft → In Review → Approved → Published"
+                    />
+                    <button
+                      type="button"
+                      className="px-2 py-1 text-[11px] rounded bg-gray-700 hover:bg-gray-600 text-gray-100"
+                      onClick={applyStatusPipelineInput}
+                    >
+                      Apply
+                    </button>
+                  </div>
+                </label>
+
+                <label className="block text-xs text-gray-300">
                   Note
                   <textarea
                     className="mt-1 w-full bg-gray-800 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-100 resize-y min-h-20"
@@ -429,7 +567,7 @@ export default function EditorPage() {
                     onChange={(e) => setStatus((e.target.value as RevisionStatus) || '')}
                   >
                     <option value="">No status</option>
-                    {STATUS_OPTIONS.map((option) => (
+                    {statusOptions.map((option) => (
                       <option key={option.value} value={option.value}>{option.label}</option>
                     ))}
                   </select>
@@ -442,8 +580,38 @@ export default function EditorPage() {
                     value={tagsInput}
                     onChange={(e) => setTagsInput(e.target.value)}
                     placeholder="planning, scope"
+                    list="known-tags"
                   />
+                  <datalist id="known-tags">
+                    {knownTags.map((tag) => (
+                      <option key={tag} value={tag} />
+                    ))}
+                  </datalist>
                 </label>
+
+                <fieldset className="border border-gray-700 rounded p-2">
+                  <legend className="px-1 text-[11px] uppercase tracking-wide text-gray-400">Required before checkpoint</legend>
+                  <div className="mt-1 space-y-1.5 text-xs text-gray-200">
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" checked={requiredFields.note} onChange={(e) => setRequiredFields((prev) => ({ ...prev, note: e.target.checked }))} />
+                      Note
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" checked={requiredFields.status} onChange={(e) => setRequiredFields((prev) => ({ ...prev, status: e.target.checked }))} />
+                      Status
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" checked={requiredFields.tags} onChange={(e) => setRequiredFields((prev) => ({ ...prev, tags: e.target.checked }))} />
+                      At least one tag
+                    </label>
+                  </div>
+                </fieldset>
+
+                {checkpointWarning && (
+                  <p className="text-[11px] text-amber-300 bg-amber-900/30 border border-amber-700 rounded px-2 py-1.5">
+                    {checkpointWarning}
+                  </p>
+                )}
               </div>
 
               <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2">

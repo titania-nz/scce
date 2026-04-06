@@ -9,7 +9,7 @@ export interface FileListResponse {
   files: FileEntry[];
 }
 
-export type RevisionStatus = 'accepted' | 'rejected' | 'needs-review';
+export type RevisionStatus = string;
 
 export interface RevisionInlineNote {
   id: string;
