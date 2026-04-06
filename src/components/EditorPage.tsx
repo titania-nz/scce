@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import Sidebar from './Sidebar';
 import PreviewPane from './PreviewPane';
@@ -8,9 +8,16 @@ import Toolbar from './Toolbar';
 import CompareView from './CompareView';
 import { useFileContent } from '@/hooks/useFileContent';
 import { useAutoSave } from '@/hooks/useAutoSave';
+import { RevisionStatus } from '@/types';
 
 // CodeMirror accesses browser APIs — must be dynamically imported with ssr:false
 const EditorPane = dynamic(() => import('./EditorPane'), { ssr: false });
+
+const STATUS_OPTIONS: Array<{ value: RevisionStatus; label: string }> = [
+  { value: 'accepted', label: 'Accepted' },
+  { value: 'rejected', label: 'Rejected' },
+  { value: 'needs-review', label: 'Needs review' },
+];
 
 export default function EditorPage() {
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
@@ -19,12 +26,32 @@ export default function EditorPage() {
   const [mobileView, setMobileView] = useState<'edit' | 'preview'>('edit');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [compareMode, setCompareMode] = useState(false);
+  const [revisionNote, setRevisionNote] = useState('');
+  const [tagsInput, setTagsInput] = useState('');
+  const [status, setStatus] = useState<RevisionStatus | ''>('');
   const [workingDraftByFile, setWorkingDraftByFile] = useState<Record<string, string>>({});
   const [lastCheckpointAtByFile, setLastCheckpointAtByFile] = useState<Record<string, string>>({});
 
-  const { content: loadedContent, isLoading, saveContent } = useFileContent(selectedFile);
+  const { content: loadedContent, revisions, isLoading, saveContent } = useFileContent(selectedFile);
   const prevFileRef = useRef<string | null>(null);
 
+  const parsedTags = useMemo(
+    () => tagsInput.split(',').map((tag) => tag.trim()).filter(Boolean),
+    [tagsInput],
+  );
+
+  // When loaded content changes (new file selected), update editor content
+  useEffect(() => {
+    if (selectedFile !== prevFileRef.current) {
+      prevFileRef.current = selectedFile;
+      setContent(loadedContent);
+      setIsDirty(false);
+      const latestRevision = revisions.at(-1);
+      setRevisionNote(latestRevision?.note ?? '');
+      setStatus(latestRevision?.status ?? '');
+      setTagsInput((latestRevision?.tags ?? []).join(', '));
+    }
+  }, [loadedContent, revisions, selectedFile]);
   const saveWorkingCopy = useCallback(async (draftContent: string) => {
     if (!selectedFile) return;
     setWorkingDraftByFile((prev) => {
@@ -60,6 +87,8 @@ export default function EditorPage() {
     content,
     filename: selectedFile,
     isDirty,
+    saveFn: async (c) => {
+      await saveContent(c, { note: revisionNote, tags: parsedTags, status: status || undefined });
     saveWorkingCopyFn: saveWorkingCopy,
     saveCheckpointFn: async (checkpointContent) => {
       if (!selectedFile) return;
@@ -106,6 +135,7 @@ export default function EditorPage() {
   async function handleFileSelect(filename: string) {
     // Persist current edits to working buffer before switching files.
     if (selectedFile && isDirty) {
+      await saveContent(content, { note: revisionNote, tags: parsedTags, status: status || undefined }).catch(() => {});
       await saveWorkingCopy(content);
     }
     setSelectedFile(filename);
@@ -117,6 +147,9 @@ export default function EditorPage() {
       setSelectedFile(null);
       setContent('');
       setIsDirty(false);
+      setRevisionNote('');
+      setTagsInput('');
+      setStatus('');
     }
 
     setWorkingDraftByFile((prev) => {
@@ -158,7 +191,6 @@ export default function EditorPage() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-950 text-gray-100">
-      {/* Mobile sidebar backdrop */}
       {sidebarOpen && (
         <div
           className="md:hidden fixed inset-0 z-10 bg-black/50"
@@ -166,7 +198,6 @@ export default function EditorPage() {
         />
       )}
 
-      {/* Sidebar */}
       <div
         className={`
           fixed md:static inset-y-0 left-0 z-20
@@ -183,7 +214,6 @@ export default function EditorPage() {
         />
       </div>
 
-      {/* Main area */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <Toolbar
           filename={selectedFile}
@@ -214,18 +244,98 @@ export default function EditorPage() {
           </div>
         ) : (
           <div className="flex-1 flex overflow-hidden">
-            {/* Editor — always shown on desktop, toggled on mobile */}
-            <div className={`flex-1 flex overflow-hidden ${mobileView === 'preview' ? 'hidden md:flex' : 'flex'}`}>
-              <EditorPane value={content} onChange={handleContentChange} />
+            <div className="flex-1 flex overflow-hidden">
+              <div className={`flex-1 flex overflow-hidden ${mobileView === 'preview' ? 'hidden md:flex' : 'flex'}`}>
+                <EditorPane value={content} onChange={handleContentChange} />
+              </div>
+
+              <div className="hidden md:block w-px bg-gray-700 shrink-0" />
+
+              <div className={`flex-1 flex overflow-hidden ${mobileView === 'edit' ? 'hidden md:flex' : 'flex'}`}>
+                <PreviewPane content={content} />
+              </div>
             </div>
 
-            {/* Divider — desktop only */}
-            <div className="hidden md:block w-px bg-gray-700 shrink-0" />
+            <aside className="hidden lg:flex w-80 border-l border-gray-700 bg-gray-900/70 flex-col overflow-hidden">
+              <div className="p-3 border-b border-gray-700 space-y-3">
+                <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Revision details</h2>
 
-            {/* Preview — always shown on desktop, toggled on mobile */}
-            <div className={`flex-1 flex overflow-hidden ${mobileView === 'edit' ? 'hidden md:flex' : 'flex'}`}>
-              <PreviewPane content={content} />
-            </div>
+                <label className="block text-xs text-gray-300">
+                  Note
+                  <textarea
+                    className="mt-1 w-full bg-gray-800 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-100 resize-y min-h-20"
+                    value={revisionNote}
+                    onChange={(e) => setRevisionNote(e.target.value)}
+                    placeholder="Why this revision exists..."
+                  />
+                </label>
+
+                <label className="block text-xs text-gray-300">
+                  Status
+                  <select
+                    className="mt-1 w-full bg-gray-800 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-100"
+                    value={status}
+                    onChange={(e) => setStatus((e.target.value as RevisionStatus) || '')}
+                  >
+                    <option value="">No status</option>
+                    {STATUS_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="block text-xs text-gray-300">
+                  Tags (comma separated)
+                  <input
+                    className="mt-1 w-full bg-gray-800 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-100"
+                    value={tagsInput}
+                    onChange={(e) => setTagsInput(e.target.value)}
+                    placeholder="planning, scope"
+                  />
+                </label>
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400 sticky top-0 bg-gray-900 py-1">
+                  Revision timeline
+                </h3>
+
+                {revisions.length === 0 ? (
+                  <p className="text-xs text-gray-500">No revisions yet. Save this file to create one.</p>
+                ) : (
+                  [...revisions].reverse().map((revision) => (
+                    <button
+                      key={revision.id}
+                      className="w-full text-left p-2 rounded border border-gray-700 bg-gray-900 hover:bg-gray-800"
+                      onClick={() => {
+                        setRevisionNote(revision.note ?? '');
+                        setStatus(revision.status ?? '');
+                        setTagsInput((revision.tags ?? []).join(', '));
+                      }}
+                    >
+                      <p className="text-[11px] text-gray-500">
+                        {new Date(revision.createdAt).toLocaleString()}
+                      </p>
+                      <p className="text-xs text-gray-200 mt-1 line-clamp-3">
+                        {revision.note || 'No note'}
+                      </p>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {revision.status && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-900 text-blue-200">
+                            {revision.status}
+                          </span>
+                        )}
+                        {revision.tags?.map((tag) => (
+                          <span key={`${revision.id}-${tag}`} className="text-[10px] px-1.5 py-0.5 rounded bg-gray-700 text-gray-200">
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            </aside>
           </div>
         )}
       </div>

@@ -1,10 +1,18 @@
 'use client';
 
 import useSWR from 'swr';
-import { FileContentResponse } from '@/types';
+import { FileContentResponse, Revision, RevisionStatus } from '@/types';
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
+interface SaveContentOptions {
+  note?: string;
+  tags?: string[];
+  status?: RevisionStatus;
+}
+
+export function useFileContent(filename: string | null) {
+  const key = filename ? `/api/files/${encodeURIComponent(filename)}` : null;
 export function useFileContent(filename: string | null, revisionId?: string | null) {
   const key = filename
     ? `/api/files/${encodeURIComponent(filename)}${revisionId ? `?revisionId=${encodeURIComponent(revisionId)}` : ''}`
@@ -13,18 +21,25 @@ export function useFileContent(filename: string | null, revisionId?: string | nu
     revalidateOnFocus: false,
   });
 
-  async function saveContent(content: string): Promise<void> {
+  async function saveContent(content: string, options: SaveContentOptions = {}): Promise<void> {
     if (!filename) return;
     const res = await fetch(`/api/files/${encodeURIComponent(filename)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({
+        content,
+        note: options.note ?? '',
+        tags: options.tags ?? [],
+        status: options.status,
+      }),
     });
     if (!res.ok) {
       const err = await res.json();
       throw new Error(err.error ?? 'Could not save file');
     }
-    await mutate({ name: filename, content }, { revalidate: false });
+
+    const response = (await res.json()) as { revisions?: Revision[] };
+    await mutate({ name: filename, content, revisions: response.revisions ?? data?.revisions ?? [] }, { revalidate: false });
   }
 
   async function promoteRevisionAsDraft(nextRevisionId: string): Promise<void> {
@@ -43,6 +58,7 @@ export function useFileContent(filename: string | null, revisionId?: string | nu
 
   return {
     content: data?.content ?? '',
+    revisions: data?.revisions ?? [],
     revisionId: data?.revisionId ?? null,
     currentDraftRevisionId: data?.currentDraftRevisionId ?? data?.revisionId ?? null,
     isLoading,

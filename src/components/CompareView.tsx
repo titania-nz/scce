@@ -151,7 +151,11 @@ export default function CompareView({ selectedFile, onFileSelect }: CompareViewP
   const [selectedChapter, setSelectedChapter] = useState<string | null>(null);
   const [selectedA, setSelectedA] = useState<string | null>(null);
   const [selectedB, setSelectedB] = useState<string | null>(null);
+  const [revisionA, setRevisionA] = useState<string>('latest');
+  const [revisionB, setRevisionB] = useState<string>('latest');
 
+  const { content: contentA, revisions: revisionsA, isLoading: loadingA } = useFileContent(selectedA);
+  const { content: contentB, revisions: revisionsB, isLoading: loadingB } = useFileContent(selectedB);
   const revisionOptions = revisions.filter((rev) =>
     selectedChapter ? rev.chapter === selectedChapter : false,
   );
@@ -167,6 +171,86 @@ export default function CompareView({ selectedFile, onFileSelect }: CompareViewP
   const selectClass =
     'flex-1 text-xs bg-gray-800 text-gray-200 border border-gray-600 rounded px-2 py-1 focus:outline-none focus:border-blue-500';
 
+  const selectedRevisionA = useMemo(
+    () => revisionsA.find((revision) => revision.id === revisionA),
+    [revisionA, revisionsA],
+  );
+  const selectedRevisionB = useMemo(
+    () => revisionsB.find((revision) => revision.id === revisionB),
+    [revisionB, revisionsB],
+  );
+
+  const effectiveContentA = selectedRevisionA?.content ?? contentA;
+  const effectiveContentB = selectedRevisionB?.content ?? contentB;
+
+  const headerA = selectedRevisionA?.note ? `${selectedA} — ${selectedRevisionA.note}` : selectedA ?? '';
+  const headerB = selectedRevisionB?.note ? `${selectedB} — ${selectedRevisionB.note}` : selectedB ?? '';
+
+  return (
+    <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex flex-col gap-2 px-3 py-2 bg-gray-900 border-b border-gray-700 shrink-0">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold text-gray-400 shrink-0">A</span>
+          <select
+            value={selectedA ?? ''}
+            onChange={(e) => {
+              setSelectedA(e.target.value || null);
+              setRevisionA('latest');
+            }}
+            className={selectClass}
+          >
+            <option value="">Select a file…</option>
+            {files.map((f) => (
+              <option key={f.name} value={f.name}>{f.name}</option>
+            ))}
+          </select>
+          <select
+            value={revisionA}
+            onChange={(e) => setRevisionA(e.target.value)}
+            className={`${selectClass} max-w-60`}
+            disabled={!selectedA}
+          >
+            <option value="latest">Latest</option>
+            {[...revisionsA].reverse().map((revision) => (
+              <option key={revision.id} value={revision.id}>
+                {new Date(revision.createdAt).toLocaleDateString()} {revision.note ? `— ${revision.note}` : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold text-gray-400 shrink-0">B</span>
+          <select
+            value={selectedB ?? ''}
+            onChange={(e) => {
+              setSelectedB(e.target.value || null);
+              setRevisionB('latest');
+            }}
+            className={selectClass}
+          >
+            <option value="">Select a file…</option>
+            {files.map((f) => (
+              <option key={f.name} value={f.name}>{f.name}</option>
+            ))}
+          </select>
+          <select
+            value={revisionB}
+            onChange={(e) => setRevisionB(e.target.value)}
+            className={`${selectClass} max-w-60`}
+            disabled={!selectedB}
+          >
+            <option value="latest">Latest</option>
+            {[...revisionsB].reverse().map((revision) => (
+              <option key={revision.id} value={revision.id}>
+                {new Date(revision.createdAt).toLocaleDateString()} {revision.note ? `— ${revision.note}` : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {!bothSelected ? (
   const bothSelected = Boolean(activeFile && selectedRevisionA && selectedRevisionB);
   const isLoading = revisionsLoading || loadingA || loadingB;
 
@@ -312,6 +396,10 @@ export default function CompareView({ selectedFile, onFileSelect }: CompareViewP
           )}
         </>
         <DiffView
+          contentA={effectiveContentA}
+          contentB={effectiveContentB}
+          filenameA={headerA}
+          filenameB={headerB}
           contentA={contentA}
           contentB={contentB}
           revisionA={selectedRevisionA!}
