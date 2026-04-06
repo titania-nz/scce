@@ -4,22 +4,34 @@ interface ToolbarProps {
   filename: string | null;
   isDirty: boolean;
   isSaving: boolean;
+  lastCheckpointAt: string | null;
   mobileView: 'edit' | 'preview';
   compareMode: boolean;
   onMobileViewChange: (view: 'edit' | 'preview') => void;
-  onSave: () => void;
+  onSaveCheckpoint: () => void;
+  onContinueWorkingDraft: () => void;
   onToggleSidebar: () => void;
   onToggleCompare: () => void;
+}
+
+function formatCheckpointTimestamp(timestamp: string | null): string {
+  if (!timestamp) return 'No checkpoint saved yet';
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(timestamp));
 }
 
 export default function Toolbar({
   filename,
   isDirty,
   isSaving,
+  lastCheckpointAt,
   mobileView,
   compareMode,
   onMobileViewChange,
-  onSave,
+  onSaveCheckpoint,
+  onContinueWorkingDraft,
   onToggleSidebar,
   onToggleCompare,
 }: ToolbarProps) {
@@ -36,20 +48,23 @@ export default function Toolbar({
         </svg>
       </button>
 
-      {/* Filename */}
+      {/* Filename + status */}
       <span className="flex-1 text-sm text-gray-300 truncate min-w-0">
         {filename ? (
           <>
             {filename}
-            {isDirty && !isSaving && (
-              <span className="ml-1.5 text-xs text-yellow-400">●</span>
-            )}
+            <span className={`ml-2 text-xs ${isDirty ? 'text-yellow-300' : 'text-emerald-300'}`}>
+              {isDirty ? 'Working draft (unsaved checkpoint)' : 'Checkpoint up to date'}
+            </span>
+            <span className="ml-2 text-xs text-gray-400">
+              Last checkpoint: {formatCheckpointTimestamp(lastCheckpointAt)}
+            </span>
           </>
         ) : (
           <span className="text-gray-500">No file selected</span>
         )}
         {isSaving && (
-          <span className="ml-2 text-xs text-gray-400">Saving...</span>
+          <span className="ml-2 text-xs text-gray-400">Saving draft…</span>
         )}
       </span>
 
@@ -93,19 +108,30 @@ export default function Toolbar({
         </button>
       </div>
 
-      {/* Save button */}
+      {/* Working draft actions */}
       {filename && !compareMode && (
-        <button
-          onClick={onSave}
-          disabled={!isDirty || isSaving}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white text-xs rounded transition-colors shrink-0"
-          title="Save (Ctrl+S)"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
-          </svg>
-          Save
-        </button>
+        <>
+          <button
+            onClick={onContinueWorkingDraft}
+            disabled={!isDirty || isSaving}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-700 disabled:text-gray-500 text-gray-200 text-xs rounded transition-colors shrink-0"
+            title="Keep edits in working draft without creating a checkpoint revision"
+          >
+            Continue editing working draft
+          </button>
+
+          <button
+            onClick={onSaveCheckpoint}
+            disabled={!isDirty || isSaving}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white text-xs rounded transition-colors shrink-0"
+            title="Save checkpoint revision (Ctrl+S)"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+            </svg>
+            Save checkpoint revision
+          </button>
+        </>
       )}
     </div>
   );

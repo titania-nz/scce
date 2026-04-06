@@ -19,25 +19,60 @@ export default function EditorPage() {
   const [mobileView, setMobileView] = useState<'edit' | 'preview'>('edit');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [compareMode, setCompareMode] = useState(false);
+  const [workingDraftByFile, setWorkingDraftByFile] = useState<Record<string, string>>({});
+  const [lastCheckpointAtByFile, setLastCheckpointAtByFile] = useState<Record<string, string>>({});
 
   const { content: loadedContent, isLoading, saveContent } = useFileContent(selectedFile);
   const prevFileRef = useRef<string | null>(null);
 
-  // When loaded content changes (new file selected), update editor content
+  const saveWorkingCopy = useCallback(async (draftContent: string) => {
+    if (!selectedFile) return;
+    setWorkingDraftByFile((prev) => {
+      if (prev[selectedFile] === draftContent) {
+        return prev;
+      }
+      return { ...prev, [selectedFile]: draftContent };
+    });
+  }, [selectedFile]);
+
+  // When loaded content changes (new file selected), update editor from working draft if present.
   useEffect(() => {
     if (selectedFile !== prevFileRef.current) {
       prevFileRef.current = selectedFile;
-      setContent(loadedContent);
-      setIsDirty(false);
+      if (!selectedFile) {
+        setContent('');
+        setIsDirty(false);
+        return;
+      }
+
+      const draft = workingDraftByFile[selectedFile];
+      if (typeof draft === 'string') {
+        setContent(draft);
+        setIsDirty(draft !== loadedContent);
+      } else {
+        setContent(loadedContent);
+        setIsDirty(false);
+      }
     }
-  }, [loadedContent, selectedFile]);
+  }, [loadedContent, selectedFile, workingDraftByFile]);
 
   const { isSaving, saveNow } = useAutoSave({
     content,
     filename: selectedFile,
     isDirty,
-    saveFn: async (c) => {
-      await saveContent(c);
+    saveWorkingCopyFn: saveWorkingCopy,
+    saveCheckpointFn: async (checkpointContent) => {
+      if (!selectedFile) return;
+      await saveContent(checkpointContent);
+      setWorkingDraftByFile((prev) => {
+        const next = { ...prev };
+        delete next[selectedFile];
+        return next;
+      });
+      setLastCheckpointAtByFile((prev) => ({
+        ...prev,
+        [selectedFile]: new Date().toISOString(),
+      }));
       setIsDirty(false);
     },
   });
@@ -47,28 +82,31 @@ export default function EditorPage() {
     setIsDirty(true);
   }
 
-  const handleSaveNow = useCallback(async () => {
+  const handleSaveCheckpoint = useCallback(async () => {
     if (!selectedFile || !isDirty) return;
     await saveNow(content);
-    setIsDirty(false);
   }, [content, isDirty, selectedFile, saveNow]);
 
-  // Ctrl+S to save
+  const handleContinueWorkingDraft = useCallback(async () => {
+    await saveWorkingCopy(content);
+  }, [content, saveWorkingCopy]);
+
+  // Ctrl+S to save checkpoint revision
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault();
-        handleSaveNow();
+        handleSaveCheckpoint();
       }
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [handleSaveNow]);
+  }, [handleSaveCheckpoint]);
 
   async function handleFileSelect(filename: string) {
-    // Auto-save current file before switching
+    // Persist current edits to working buffer before switching files.
     if (selectedFile && isDirty) {
-      await saveContent(content).catch(() => {});
+      await saveWorkingCopy(content);
     }
     setSelectedFile(filename);
     setSidebarOpen(false);
@@ -80,13 +118,43 @@ export default function EditorPage() {
       setContent('');
       setIsDirty(false);
     }
+
+    setWorkingDraftByFile((prev) => {
+      if (!(filename in prev)) return prev;
+      const next = { ...prev };
+      delete next[filename];
+      return next;
+    });
+
+    setLastCheckpointAtByFile((prev) => {
+      if (!(filename in prev)) return prev;
+      const next = { ...prev };
+      delete next[filename];
+      return next;
+    });
   }
 
   function handleFileRenamed(oldName: string, newName: string) {
     if (selectedFile === oldName) {
       setSelectedFile(newName);
     }
+
+    setWorkingDraftByFile((prev) => {
+      if (!(oldName in prev)) return prev;
+      const next = { ...prev, [newName]: prev[oldName] };
+      delete next[oldName];
+      return next;
+    });
+
+    setLastCheckpointAtByFile((prev) => {
+      if (!(oldName in prev)) return prev;
+      const next = { ...prev, [newName]: prev[oldName] };
+      delete next[oldName];
+      return next;
+    });
   }
+
+  const lastCheckpointAt = selectedFile ? lastCheckpointAtByFile[selectedFile] ?? null : null;
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-950 text-gray-100">
@@ -121,10 +189,12 @@ export default function EditorPage() {
           filename={selectedFile}
           isDirty={isDirty}
           isSaving={isSaving}
+          lastCheckpointAt={lastCheckpointAt}
           mobileView={mobileView}
           compareMode={compareMode}
           onMobileViewChange={setMobileView}
-          onSave={handleSaveNow}
+          onSaveCheckpoint={handleSaveCheckpoint}
+          onContinueWorkingDraft={handleContinueWorkingDraft}
           onToggleSidebar={() => setSidebarOpen((o) => !o)}
           onToggleCompare={() => setCompareMode((m) => !m)}
         />
