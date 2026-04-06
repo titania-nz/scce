@@ -6,8 +6,10 @@ import Sidebar from './Sidebar';
 import PreviewPane from './PreviewPane';
 import Toolbar from './Toolbar';
 import CompareView from './CompareView';
+import DocumentDashboard from './DocumentDashboard';
 import { useFileContent } from '@/hooks/useFileContent';
 import { useAutoSave } from '@/hooks/useAutoSave';
+import { useDocuments } from '@/hooks/useDocuments';
 import { RevisionStatus } from '@/types';
 
 // CodeMirror accesses browser APIs — must be dynamically imported with ssr:false
@@ -27,6 +29,7 @@ export default function EditorPage() {
   const [mobileView, setMobileView] = useState<'edit' | 'preview'>('edit');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [compareMode, setCompareMode] = useState(false);
+  const [documentMode, setDocumentMode] = useState(false);
   const [revisionNote, setRevisionNote] = useState('');
   const [tagsInput, setTagsInput] = useState('');
   const [status, setStatus] = useState<RevisionStatus | ''>('');
@@ -34,6 +37,12 @@ export default function EditorPage() {
   const [lastCheckpointAtByFile, setLastCheckpointAtByFile] = useState<Record<string, string>>({});
 
   const { content: loadedContent, revisions, isLoading, saveContent } = useFileContent(selectedFile);
+  const {
+    documents,
+    isLoading: isDocumentsLoading,
+    promoteRevision,
+    addComment,
+  } = useDocuments();
   const prevFileRef = useRef<string | null>(null);
 
   const parsedTags = useMemo(
@@ -229,14 +238,32 @@ export default function EditorPage() {
           lastCheckpointAt={lastCheckpointAt}
           mobileView={mobileView}
           compareMode={compareMode}
+          documentMode={documentMode}
           onMobileViewChange={setMobileView}
           onSaveCheckpoint={handleSaveCheckpoint}
           onContinueWorkingDraft={handleContinueWorkingDraft}
           onToggleSidebar={() => setSidebarOpen((o) => !o)}
-          onToggleCompare={() => setCompareMode((m) => !m)}
+          onToggleCompare={() => {
+            setCompareMode((m) => !m);
+            setDocumentMode(false);
+          }}
+          onToggleDocumentDashboard={() => {
+            setDocumentMode((mode) => !mode);
+            setCompareMode(false);
+          }}
         />
 
-        {compareMode ? (
+        {documentMode ? (
+          <DocumentDashboard
+            documents={documents}
+            isLoading={isDocumentsLoading}
+            onPromote={(documentId, revisionId) => promoteRevision(documentId, revisionId, 'canonical')}
+            onSetAccepted={(documentId, revisionId) => promoteRevision(documentId, revisionId, 'accepted')}
+            onSetDraft={(documentId, revisionId) => promoteRevision(documentId, revisionId, 'draft')}
+            onAddComment={addComment}
+            onSelectFile={setSelectedFile}
+          />
+        ) : compareMode ? (
           <CompareView selectedFile={selectedFile} onFileSelect={setSelectedFile} />
         ) : !selectedFile ? (
           <div className="flex-1 flex flex-col items-center justify-center text-gray-500 gap-3">
