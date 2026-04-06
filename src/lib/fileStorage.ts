@@ -308,7 +308,9 @@ export async function listFiles(): Promise<FileEntry[]> {
       .filter((blob) => blob.key.endsWith('.md') && VALID_FILENAME.test(blob.key))
       .map((blob) => ({
         name: blob.key,
-        mtime: nowIso(),
+        mtime: new Date().toISOString(),
+        ctime: new Date().toISOString(),
+
         size: 0,
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -326,7 +328,12 @@ export async function listFiles(): Promise<FileEntry[]> {
     .filter((name) => name.endsWith('.md') && VALID_FILENAME.test(name))
     .map((name) => {
       const stat = fs.statSync(path.join(dir, name));
-      return { name, mtime: stat.mtime.toISOString(), size: stat.size };
+      return {
+        name,
+        mtime: stat.mtime.toISOString(),
+        ctime: stat.birthtime.toISOString(),
+        size: stat.size,
+      };
     })
     .sort((a, b) => a.name.localeCompare(b.name));
 
