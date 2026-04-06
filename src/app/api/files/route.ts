@@ -46,6 +46,9 @@ export async function POST(request: NextRequest) {
     if (!name.endsWith('.md')) {
       return NextResponse.json({ error: 'Filename must end with .md' }, { status: 400 });
     }
+    if (typeof content !== 'string') {
+      return NextResponse.json({ error: 'Invalid content' }, { status: 400 });
+    }
     if (await fileExists(name)) {
       return NextResponse.json({ error: 'File already exists' }, { status: 409 });
     }
