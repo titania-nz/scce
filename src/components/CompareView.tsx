@@ -364,17 +364,18 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
           Loading...
         </div>
       ) : (
-        <DiffView
-          contentA={effectiveContentA}
-          contentB={effectiveContentB}
-          filenameA={headerA}
-          filenameB={headerB}
-          actionLabel={isFinalizing ? 'Finalizing...' : 'Finalize merge'}
-          actionHint="Save merge result to the selected destination"
-          actionDisabled={isFinalizeDisabled}
-          onAction={handleFinalize}
-        />
-        <div className="flex-1 flex overflow-hidden">
+        <>
+          <DiffView
+            contentA={effectiveContentA}
+            contentB={effectiveContentB}
+            filenameA={headerA}
+            filenameB={headerB}
+            actionLabel={isFinalizing ? 'Finalizing...' : 'Finalize merge'}
+            actionHint="Save merge result to the selected destination"
+            actionDisabled={isFinalizeDisabled}
+            onAction={handleFinalize}
+          />
+          <div className="flex-1 flex overflow-hidden">
           <div className="flex-1 min-w-0 overflow-hidden">
             <DiffView
               contentA={effectiveContentA}
@@ -401,6 +402,7 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
             />
           </div>
         </div>
+        </>
       )}
 
       {showOverwriteConfirm && (
