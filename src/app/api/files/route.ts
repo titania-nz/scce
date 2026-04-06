@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { listFiles, writeFile, fileExists } from '@/lib/fileStorage';
+import { createRevision, fileExists, listFiles, writeFile } from '@/lib/fileStorage';
 
 export async function GET() {
   try {
@@ -26,6 +26,7 @@ export async function POST(request: NextRequest) {
     }
 
     await writeFile(name, content);
+    await createRevision(name, content, { setAsDraft: true });
     return NextResponse.json({ name }, { status: 201 });
   } catch (err: unknown) {
     const e = err as { status?: number; message?: string };

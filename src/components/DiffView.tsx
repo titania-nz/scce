@@ -3,11 +3,19 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { computeDiff, DiffHunk, DiffLine } from '@/lib/diffUtils';
 
+export interface RevisionDescriptor {
+  filename: string;
+  chapter: string;
+  timestampLabel: string;
+  sourceLabel: string;
+  noteSummary: string;
+}
+
 interface DiffViewProps {
   contentA: string;
   contentB: string;
-  filenameA: string;
-  filenameB: string;
+  revisionA: RevisionDescriptor;
+  revisionB: RevisionDescriptor;
 }
 
 function DiffLineRow({ line }: { line: DiffLine }) {
@@ -64,7 +72,21 @@ function HunkBlock({
   );
 }
 
-export default function DiffView({ contentA, contentB, filenameA, filenameB }: DiffViewProps) {
+export default function DiffView({
+  contentA,
+  contentB,
+  filenameA,
+  filenameB,
+  actionLabel,
+  actionHint,
+  actionDisabled = false,
+  onAction,
+}: DiffViewProps) {
+function formatRevisionHeader(revision: RevisionDescriptor) {
+  return `${revision.timestampLabel} · ${revision.sourceLabel} · ${revision.noteSummary}`;
+}
+
+export default function DiffView({ contentA, contentB, revisionA, revisionB }: DiffViewProps) {
   const diff = useMemo(() => computeDiff(contentA, contentB), [contentA, contentB]);
   const [activeIdx, setActiveIdx] = useState(0);
   const hunkRefs = useRef<Map<number, HTMLDivElement>>(new Map());
@@ -96,9 +118,15 @@ export default function DiffView({ contentA, contentB, filenameA, filenameB }: D
 
         {/* Filenames */}
         <span className="text-gray-500 truncate flex-1 min-w-0">
-          <span className="text-gray-300">{filenameA}</span>
+          <span className="text-gray-300">{revisionA.chapter}</span>
           <span className="mx-1">vs</span>
-          <span className="text-gray-300">{filenameB}</span>
+          <span className="text-gray-300">{revisionB.chapter}</span>
+        </span>
+
+        <span className="text-gray-500 truncate min-w-0 hidden lg:inline">
+          <span className="text-gray-300">{formatRevisionHeader(revisionA)}</span>
+          <span className="mx-1">vs</span>
+          <span className="text-gray-300">{formatRevisionHeader(revisionB)}</span>
         </span>
 
         {/* Hunk navigation */}
@@ -124,6 +152,17 @@ export default function DiffView({ contentA, contentB, filenameA, filenameB }: D
               Next ↓
             </button>
           </div>
+        )}
+
+        {actionLabel && onAction && (
+          <button
+            onClick={onAction}
+            disabled={actionDisabled}
+            title={actionHint}
+            className="px-2 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            {actionLabel}
+          </button>
         )}
       </div>
 

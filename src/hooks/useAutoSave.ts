@@ -7,7 +7,8 @@ interface UseAutoSaveOptions {
   content: string;
   filename: string | null;
   isDirty: boolean;
-  saveFn: (content: string) => Promise<void>;
+  saveWorkingCopyFn: (content: string) => Promise<void>;
+  saveCheckpointFn: (content: string) => Promise<void>;
   debounceMs?: number;
 }
 
@@ -15,32 +16,35 @@ export function useAutoSave({
   content,
   filename,
   isDirty,
-  saveFn,
+  saveWorkingCopyFn,
+  saveCheckpointFn,
   debounceMs = 1500,
 }: UseAutoSaveOptions) {
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [debouncedContent] = useDebounce(content, debounceMs);
   const isDirtyRef = useRef(isDirty);
-  const saveFnRef = useRef(saveFn);
+  const saveWorkingCopyFnRef = useRef(saveWorkingCopyFn);
+  const saveCheckpointFnRef = useRef(saveCheckpointFn);
 
   isDirtyRef.current = isDirty;
-  saveFnRef.current = saveFn;
+  saveWorkingCopyFnRef.current = saveWorkingCopyFn;
+  saveCheckpointFnRef.current = saveCheckpointFn;
 
-  // Debounced auto-save
+  // Debounced auto-save to working copy buffer.
   useEffect(() => {
     if (!filename || !isDirtyRef.current) return;
     let cancelled = false;
     setIsSaving(true);
     setSaveError(null);
-    saveFnRef.current(debouncedContent)
+    saveWorkingCopyFnRef.current(debouncedContent)
       .then(() => {
         if (!cancelled) setIsSaving(false);
       })
       .catch((err) => {
         if (!cancelled) {
           setIsSaving(false);
-          setSaveError(err.message ?? 'Save failed');
+          setSaveError(err.message ?? 'Auto-save failed');
         }
       });
     return () => {
@@ -54,10 +58,10 @@ export function useAutoSave({
     setIsSaving(true);
     setSaveError(null);
     try {
-      await saveFnRef.current(currentContent);
+      await saveCheckpointFnRef.current(currentContent);
     } catch (err: unknown) {
       const e = err as { message?: string };
-      setSaveError(e.message ?? 'Save failed');
+      setSaveError(e.message ?? 'Checkpoint save failed');
       throw err;
     } finally {
       setIsSaving(false);
