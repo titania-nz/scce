@@ -288,8 +288,8 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
         <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-gray-700">
           <label className="text-xs text-gray-300 shrink-0">Merge target</label>
           <input
-            value={targetFilename}
-            onChange={(e) => setTargetFilename(e.target.value)}
+            value={targetFilename ?? ''}
+            onChange={(e) => setNewFilePath(e.target.value)}
             placeholder="merged-result.md"
             className="flex-1 min-w-56 text-xs bg-gray-800 text-gray-200 border border-gray-600 rounded px-2 py-1 focus:outline-none focus:border-blue-500"
           />
