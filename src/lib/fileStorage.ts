@@ -1,8 +1,14 @@
 import fs from 'fs';
 import path from 'path';
 import { getStore } from '@netlify/blobs';
-import { FileEntry, RevisionEntry } from '@/types';
-import { CreateDocumentInput, CreateRevisionInput, Document, FileEntry, Revision } from '@/types';
+import {
+  CreateDocumentInput,
+  CreateRevisionInput,
+  Document,
+  DocumentRevision,
+  FileEntry,
+  RevisionEntry,
+} from '@/types';
 
 const VALID_FILENAME = /^[a-zA-Z0-9_\-. ]+\.md$/;
 const MAX_FILENAME_LENGTH = 255;
@@ -150,6 +156,8 @@ async function writeRevisionContent(filename: string, revisionId: string, conten
 
   ensureLocalRevisionDirs(filename);
   fs.writeFileSync(getRevisionContentPath(filename, revisionId), content, 'utf-8');
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -195,7 +203,7 @@ function validateDocumentId(documentId: string): void {
   }
 }
 
-function ensureRevision(revision: Revision): Revision {
+function ensureRevision(revision: DocumentRevision): DocumentRevision {
   return {
     ...revision,
     notes: Array.isArray(revision.notes) ? revision.notes : [],
@@ -335,14 +343,14 @@ export async function createDocumentRootRecord(input: CreateDocumentInput): Prom
 export async function appendImmutableRevision(
   documentId: string,
   input: CreateRevisionInput,
-): Promise<Revision> {
+): Promise<DocumentRevision> {
   validateDocumentId(documentId);
   await readDocumentRootRecord(documentId);
 
   const createdAt = input.createdAt ?? nowIso();
   const revisionId = generateRevisionId(createdAt);
 
-  const revision: Revision = {
+  const revision: DocumentRevision = {
     id: revisionId,
     documentId,
     createdAt,
@@ -363,7 +371,7 @@ export async function appendImmutableRevision(
   return revision;
 }
 
-export async function listRevisionsByDocumentId(documentId: string): Promise<Revision[]> {
+export async function listRevisionsByDocumentId(documentId: string): Promise<DocumentRevision[]> {
   validateDocumentId(documentId);
   await readDocumentRootRecord(documentId);
 
@@ -372,12 +380,12 @@ export async function listRevisionsByDocumentId(documentId: string): Promise<Rev
     if (!store) return [];
     const prefix = `documents/${documentId}/${REVISIONS_DIR}/`;
     const { blobs } = await store.list({ prefix });
-    const revisions: Revision[] = [];
+    const revisions: DocumentRevision[] = [];
 
     for (const blob of blobs) {
       if (!blob.key.endsWith('.json')) continue;
       const buffer = await store.get(blob.key);
-      const parsed = JSON.parse(new TextDecoder().decode(buffer)) as Revision;
+      const parsed = JSON.parse(new TextDecoder().decode(buffer)) as DocumentRevision;
       revisions.push(ensureRevision(parsed));
     }
 
@@ -394,13 +402,13 @@ export async function listRevisionsByDocumentId(documentId: string): Promise<Rev
     .filter((name) => name.endsWith('.json'))
     .map((name) => {
       const revisionPath = path.join(revisionsDir, name);
-      const raw = JSON.parse(fs.readFileSync(revisionPath, 'utf8')) as Revision;
+      const raw = JSON.parse(fs.readFileSync(revisionPath, 'utf8')) as DocumentRevision;
       return ensureRevision(raw);
     })
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
-export async function getRevision(documentId: string, revisionId: string): Promise<Revision> {
+export async function getRevision(documentId: string, revisionId: string): Promise<DocumentRevision> {
   validateDocumentId(documentId);
   if (!/^[a-zA-Z0-9_-]{8,128}$/.test(revisionId)) {
     throw Object.assign(new Error('Invalid revision ID'), { status: 400 });
@@ -413,7 +421,7 @@ export async function getRevision(documentId: string, revisionId: string): Promi
     if (!store) throw Object.assign(new Error('Revision not found'), { status: 404 });
     try {
       const buffer = await store.get(documentRevisionBlobKey(documentId, revisionId));
-      return ensureRevision(JSON.parse(new TextDecoder().decode(buffer)) as Revision);
+      return ensureRevision(JSON.parse(new TextDecoder().decode(buffer)) as DocumentRevision);
     } catch {
       throw Object.assign(new Error('Revision not found'), { status: 404 });
     }
@@ -423,7 +431,7 @@ export async function getRevision(documentId: string, revisionId: string): Promi
   if (!fs.existsSync(revisionPath)) {
     throw Object.assign(new Error('Revision not found'), { status: 404 });
   }
-  const revision = JSON.parse(fs.readFileSync(revisionPath, 'utf8')) as Revision;
+  const revision = JSON.parse(fs.readFileSync(revisionPath, 'utf8')) as DocumentRevision;
   return ensureRevision(revision);
 }
 
@@ -646,9 +654,6 @@ export async function renameFile(oldName: string, newName: string): Promise<void
       });
     }
   }
-  fs.renameSync(oldPath, newPath);
-  await copyRevisionData(oldName, newName);
-  await removeRevisionData(oldName);
 }
 
 export async function fileExists(filename: string): Promise<boolean> {

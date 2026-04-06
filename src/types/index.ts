@@ -11,6 +11,7 @@ export interface FileListResponse {
 
 export type RevisionStatus = 'accepted' | 'rejected' | 'needs-review';
 
+// Per-file UI/API revision metadata
 export interface Revision {
   id: string;
   createdAt: string;
@@ -24,6 +25,8 @@ export interface FileContentResponse {
   name: string;
   content: string;
   revisions: Revision[];
+  revisionId?: string | null;
+  currentDraftRevisionId?: string | null;
 }
 
 export interface SaveFileRequest {
@@ -48,7 +51,8 @@ export interface Document {
   sourceFilename?: string;
 }
 
-export interface Revision {
+// Immutable document revisions for /documents endpoints
+export interface DocumentRevision {
   id: string;
   documentId: string;
   createdAt: string;
