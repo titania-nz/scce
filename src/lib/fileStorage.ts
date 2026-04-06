@@ -673,6 +673,8 @@ export async function renameFile(oldName: string, newName: string): Promise<void
     }
     fs.mkdirSync(path.dirname(newPath), { recursive: true });
     fs.renameSync(oldPath, newPath);
+    await copyRevisionData(oldName, newName);
+    await removeRevisionData(oldName);
   }
 
   const oldDocumentId = legacyFilenameToDocumentId(oldName);
