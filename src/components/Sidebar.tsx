@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFiles } from '@/hooks/useFiles';
 import { FileContentResponse, FileEntry } from '@/types';
 import { buildFileApiPath } from '@/lib/fileApiPath';
+import { RevisionMetaSummary, parseMetaFromContent } from '@/lib/revisionMeta';
 
 interface SidebarProps {
   selectedFile: string | null;
@@ -11,6 +12,7 @@ interface SidebarProps {
   onFileDeleted: (filename: string) => void;
   onFileRenamed: (oldName: string, newName: string) => void;
   onJumpToHeading: (heading: string) => void;
+  applyFilter: (filter: { chapterSearch: string; metaSearch: string; dateFrom: string; dateTo: string }) => void;
 }
 
 type RevisionMeta = RevisionMetaSummary;
@@ -225,6 +227,7 @@ export default function Sidebar({
   onFileDeleted,
   onFileRenamed,
   onJumpToHeading,
+  applyFilter,
 }: SidebarProps) {
   const { files, isLoading, createFile, deleteFile, deleteFiles, renameFile } = useFiles();
   const [newFileName, setNewFileName] = useState('');
@@ -251,6 +254,20 @@ export default function Sidebar({
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  function getCurrentWeekRange() {
+    const now = new Date();
+    const startOfWeek = new Date(now);
+    startOfWeek.setDate(now.getDate() - now.getDay());
+    startOfWeek.setHours(0, 0, 0, 0);
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(startOfWeek.getDate() + 6);
+    endOfWeek.setHours(23, 59, 59, 999);
+    return {
+      from: startOfWeek.toISOString().split('T')[0],
+      to: endOfWeek.toISOString().split('T')[0],
+    };
+  }
 
   useEffect(() => {
     let cancelled = false;

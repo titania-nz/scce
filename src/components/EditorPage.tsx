@@ -111,6 +111,9 @@ export default function EditorPage() {
   const [selectedRevisionIds, setSelectedRevisionIds] = useState<string[]>([]);
   const [timelineError, setTimelineError] = useState<string | null>(null);
   const [inlineNoteMessage, setInlineNoteMessage] = useState('');
+  const [inlineNoteLine, setInlineNoteLine] = useState<string>('');
+  const [jumpToHeadingToken, setJumpToHeadingToken] = useState<string>('');
+  const [fileFilter, setFileFilter] = useState({ chapterSearch: '', metaSearch: '', dateFrom: '', dateTo: '' });
 
   const { content: loadedContent, revisions, isLoading, saveContent, updateRevisionInlineNotes } = useFileContent(selectedFile);
   const prevFileRef = useRef<string | null>(null);
@@ -607,6 +610,7 @@ export default function EditorPage() {
           onFileDeleted={handleFileDeleted}
           onFileRenamed={handleFileRenamed}
           onJumpToHeading={(heading) => setJumpToHeadingToken(`${Date.now()}::${heading}`)}
+          applyFilter={setFileFilter}
         />
       </div>
 
