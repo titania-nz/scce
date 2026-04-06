@@ -11,6 +11,18 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000). Notes are stored in the `notes/` directory by default. Set the `NOTES_DIR` environment variable to use a different path.
 
+### Local validation
+
+Before opening a pull request, run:
+
+```bash
+npm run lint
+npm run typecheck
+npm run test
+```
+
+CI runs the same commands on pull requests. The workflow currently uses non-blocking mode (`continue-on-error`) while baseline issues are being resolved; remove that setting to enforce hard required checks.
+
 ## Deploying to Netlify
 
 ### 1. Connect the repository
@@ -43,3 +55,15 @@ On Netlify, notes are stored in **Netlify Blobs** (persistent key-value storage 
 All routes are protected by a password set via the `AUTH_PASSWORD` environment variable. After a successful login, an httpOnly cookie is set that lasts 30 days. To log out, visit `/login` — a logout option can be added if needed.
 
 If `AUTH_SECRET` is not set, the site will return a `503` error on every request as a safety measure.
+
+## Collaboration scaffolding
+
+Document revisions now include collaboration state so a personal workflow can evolve into team workflows without changing storage shape. Each immutable revision can now carry:
+
+- presence and optional draft lock ownership ("Alice is editing this draft")
+- shared comments
+- review requests
+- mentions and per-user notifications
+- an audit trail of collaboration events (who changed what and when)
+
+Collaboration state is managed via `PATCH /api/files/documents/:documentId/revisions/:revisionId` and persisted alongside each revision record.

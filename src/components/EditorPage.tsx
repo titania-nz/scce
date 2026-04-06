@@ -6,6 +6,7 @@ import Sidebar from './Sidebar';
 import PreviewPane from './PreviewPane';
 import Toolbar from './Toolbar';
 import CompareView from './CompareView';
+import DiffView from './DiffView';
 import { useFileContent } from '@/hooks/useFileContent';
 import { useAutoSave } from '@/hooks/useAutoSave';
 import { useFiles } from '@/hooks/useFiles';
@@ -15,11 +16,70 @@ import { RevisionStatus } from '@/types';
 // CodeMirror accesses browser APIs — must be dynamically imported with ssr:false
 const EditorPane = dynamic(() => import('./EditorPane'), { ssr: false });
 
-const STATUS_OPTIONS: Array<{ value: RevisionStatus; label: string }> = [
-  { value: 'accepted', label: 'Accepted' },
-  { value: 'rejected', label: 'Rejected' },
-  { value: 'needs-review', label: 'Needs review' },
-];
+const DEFAULT_STATUS_PIPELINE = ['Draft', 'In Review', 'Approved', 'Published'];
+const DEFAULT_REQUIRED_FIELDS = {
+  note: true,
+  status: true,
+  tags: false,
+};
+const PIPELINE_STORAGE_KEY = 'scce.statusPipeline';
+const REQUIRED_FIELDS_STORAGE_KEY = 'scce.requiredMetaFields';
+
+interface RevisionSummary {
+  addedChars: number;
+  removedChars: number;
+  addedHeadings: number;
+  removedHeadings: number;
+}
+
+function computeCharChanges(previousContent: string, nextContent: string): Pick<RevisionSummary, 'addedChars' | 'removedChars'> {
+  let i = 0;
+  const minLen = Math.min(previousContent.length, nextContent.length);
+  while (i < minLen && previousContent[i] === nextContent[i]) {
+    i += 1;
+  }
+
+  let j = 0;
+  while (
+    j < minLen - i &&
+    previousContent[previousContent.length - 1 - j] === nextContent[nextContent.length - 1 - j]
+  ) {
+    j += 1;
+  }
+
+  return {
+    removedChars: Math.max(0, previousContent.length - i - j),
+    addedChars: Math.max(0, nextContent.length - i - j),
+  };
+}
+
+function extractHeadings(content: string): Set<string> {
+  const matches = content.match(/^#{1,6}\s+(.+)$/gm) ?? [];
+  return new Set(matches.map((value) => value.trim().toLowerCase()));
+}
+
+function computeRevisionSummary(previous: Revision | undefined, current: Revision): RevisionSummary {
+  const previousContent = previous?.content ?? '';
+  const { addedChars, removedChars } = computeCharChanges(previousContent, current.content);
+  const previousHeadings = extractHeadings(previousContent);
+  const currentHeadings = extractHeadings(current.content);
+
+  let addedHeadings = 0;
+  let removedHeadings = 0;
+
+  currentHeadings.forEach((heading) => {
+    if (!previousHeadings.has(heading)) {
+      addedHeadings += 1;
+    }
+  });
+  previousHeadings.forEach((heading) => {
+    if (!currentHeadings.has(heading)) {
+      removedHeadings += 1;
+    }
+  });
+
+  return { addedChars, removedChars, addedHeadings, removedHeadings };
+}
 
 interface CommandItem {
   id: string;
@@ -102,9 +162,16 @@ export default function EditorPage() {
   const [mobileView, setMobileView] = useState<'edit' | 'preview'>('edit');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [compareMode, setCompareMode] = useState(false);
+  const [compareHasUnsavedChanges, setCompareHasUnsavedChanges] = useState(false);
   const [revisionNote, setRevisionNote] = useState('');
   const [tagsInput, setTagsInput] = useState('');
   const [status, setStatus] = useState<RevisionStatus | ''>('');
+  const [statusPipeline, setStatusPipeline] = useState<string[]>(DEFAULT_STATUS_PIPELINE);
+  const [statusPipelineInput, setStatusPipelineInput] = useState(DEFAULT_STATUS_PIPELINE.join(' → '));
+  const [requiredFields, setRequiredFields] = useState(DEFAULT_REQUIRED_FIELDS);
+  const [checkpointWarning, setCheckpointWarning] = useState<string | null>(null);
+  const [knownTags, setKnownTags] = useState<string[]>([]);
+  const { files } = useFiles();
   const [workingDraftByFile, setWorkingDraftByFile] = useState<Record<string, string>>({});
   const [lastCheckpointAtByFile, setLastCheckpointAtByFile] = useState<Record<string, string>>({});
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
@@ -122,6 +189,97 @@ export default function EditorPage() {
     () => tagsInput.split(',').map((tag) => tag.trim()).filter(Boolean),
     [tagsInput],
   );
+  const statusOptions = useMemo(
+    () => statusPipeline.map((value) => ({ value, label: value })),
+    [statusPipeline],
+  );
+  const missingRequiredFields = useMemo(() => {
+    const missing: string[] = [];
+    if (requiredFields.note && revisionNote.trim().length === 0) missing.push('Note');
+    if (requiredFields.status && status.trim().length === 0) missing.push('Status');
+    if (requiredFields.tags && parsedTags.length === 0) missing.push('At least one tag');
+    return missing;
+  }, [parsedTags.length, requiredFields.note, requiredFields.status, requiredFields.tags, revisionNote, status]);
+
+  useEffect(() => {
+    const rawPipeline = window.localStorage.getItem(PIPELINE_STORAGE_KEY);
+    if (rawPipeline) {
+      try {
+        const parsed = JSON.parse(rawPipeline) as string[];
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const cleaned = parsed.map((item) => item.trim()).filter(Boolean).slice(0, 12);
+          if (cleaned.length > 0) {
+            setStatusPipeline(cleaned);
+            setStatusPipelineInput(cleaned.join(' → '));
+          }
+        }
+      } catch {
+        // noop
+      }
+    }
+
+    const rawRequired = window.localStorage.getItem(REQUIRED_FIELDS_STORAGE_KEY);
+    if (rawRequired) {
+      try {
+        const parsed = JSON.parse(rawRequired) as Partial<typeof DEFAULT_REQUIRED_FIELDS>;
+        setRequiredFields((prev) => ({
+          note: typeof parsed.note === 'boolean' ? parsed.note : prev.note,
+          status: typeof parsed.status === 'boolean' ? parsed.status : prev.status,
+          tags: typeof parsed.tags === 'boolean' ? parsed.tags : prev.tags,
+        }));
+      } catch {
+        // noop
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(PIPELINE_STORAGE_KEY, JSON.stringify(statusPipeline));
+  }, [statusPipeline]);
+
+  useEffect(() => {
+    window.localStorage.setItem(REQUIRED_FIELDS_STORAGE_KEY, JSON.stringify(requiredFields));
+  }, [requiredFields]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadKnownTags() {
+      if (files.length === 0) {
+        if (!cancelled) setKnownTags([]);
+        return;
+      }
+
+      const tagSet = new Set<string>();
+      await Promise.all(
+        files.map(async (file) => {
+          try {
+            const res = await fetch(buildFileApiPath(file.name));
+            if (!res.ok) return;
+            const payload = (await res.json()) as { revisions?: Array<{ tags?: string[] }> };
+            payload.revisions?.forEach((revision) => {
+              revision.tags?.forEach((tag) => {
+                const cleaned = tag.trim().toLowerCase();
+                if (cleaned) tagSet.add(cleaned);
+              });
+            });
+          } catch {
+            // noop
+          }
+        }),
+      );
+
+      if (!cancelled) {
+        setKnownTags(Array.from(tagSet).sort((a, b) => a.localeCompare(b)));
+      }
+    }
+
+    void loadKnownTags();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [files]);
 
   useEffect(() => {
     try {
@@ -165,6 +323,8 @@ export default function EditorPage() {
       if (!selectedFile) {
         setContent('');
         setIsDirty(false);
+        setSelectedRevisionIds([]);
+        setActiveRevisionId(null);
         return;
       }
 
@@ -179,6 +339,11 @@ export default function EditorPage() {
     }
   }, [loadedContent, revisions, selectedFile, workingDraftByFile]);
 
+  useEffect(() => {
+    setSelectedRevisionIds((prev) => prev.filter((id) => revisions.some((revision) => revision.id === id)).slice(-2));
+    setActiveRevisionId((prev) => (prev && revisions.some((revision) => revision.id === prev) ? prev : null));
+  }, [revisions]);
+
   // Keep editor content in sync once async file content loads, but never clobber unsaved edits.
   useEffect(() => {
     if (!selectedFile) return;
@@ -189,6 +354,37 @@ export default function EditorPage() {
 
     setContent(loadedContent);
   }, [isDirty, loadedContent, selectedFile, workingDraftByFile]);
+
+  useEffect(() => {
+    async function loadPublishMetadata() {
+      if (!selectedFile) {
+        setPublishProfiles([]);
+        setPublishHistory([]);
+        setPublishMessage('');
+        setLatestRevisionStatus('');
+        return;
+      }
+      try {
+        const res = await fetch(buildFilePublishApiPath(selectedFile));
+        const payload = await res.json() as {
+          profiles?: PublishTargetProfile[];
+          history?: PublishHistoryEntry[];
+          latestRevisionStatus?: RevisionStatus;
+        };
+        if (!res.ok) {
+          throw new Error(payload && 'error' in payload ? String((payload as { error?: string }).error) : 'Could not load publish profiles');
+        }
+        setPublishProfiles(payload.profiles ?? []);
+        setPublishHistory(payload.history ?? []);
+        setLatestRevisionStatus(payload.latestRevisionStatus ?? '');
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Could not load publish profiles';
+        setPublishMessage(message);
+      }
+    }
+
+    loadPublishMetadata();
+  }, [selectedFile, revisions]);
 
   const { isSaving, saveNow } = useAutoSave({
     content,
@@ -214,6 +410,7 @@ export default function EditorPage() {
       setIsDirty(false);
     },
   });
+  const canSaveCheckpoint = isDirty && !isSaving && missingRequiredFields.length === 0;
 
   const createNewFile = useCallback(async () => {
     const rawName = window.prompt('New file name', 'untitled');
@@ -307,8 +504,13 @@ export default function EditorPage() {
 
   const handleSaveCheckpoint = useCallback(async () => {
     if (!selectedFile || !isDirty) return;
+    if (missingRequiredFields.length > 0) {
+      setCheckpointWarning(`Complete required fields: ${missingRequiredFields.join(', ')}`);
+      return;
+    }
+    setCheckpointWarning(null);
     await saveNow(content);
-  }, [content, isDirty, selectedFile, saveNow]);
+  }, [content, isDirty, missingRequiredFields, saveNow, selectedFile]);
 
   const handleContinueWorkingDraft = useCallback(async () => {
     await saveWorkingCopy(content);
@@ -388,6 +590,10 @@ export default function EditorPage() {
       setRevisionNote('');
       setTagsInput('');
       setStatus('');
+      setPublishHistory([]);
+      setPublishProfiles([]);
+      setPublishMessage('');
+      setLatestRevisionStatus('');
     }
 
     setWorkingDraftByFile((prev) => {
@@ -533,6 +739,8 @@ export default function EditorPage() {
           onFileSelect={handleFileSelect}
           onFileDeleted={handleFileDeleted}
           onFileRenamed={handleFileRenamed}
+          onJumpToHeading={(heading) => setJumpToHeadingToken(`${Date.now()}::${heading}`)}
+          applyFilter={setFileFilter}
         />
       </div>
 
@@ -546,13 +754,19 @@ export default function EditorPage() {
           compareMode={compareMode}
           onMobileViewChange={setMobileView}
           onSaveCheckpoint={handleSaveCheckpoint}
+          canSaveCheckpoint={canSaveCheckpoint}
+          checkpointBlockReason={missingRequiredFields.length > 0 ? `Required: ${missingRequiredFields.join(', ')}` : undefined}
           onContinueWorkingDraft={handleContinueWorkingDraft}
           onToggleSidebar={() => setSidebarOpen((o) => !o)}
-          onToggleCompare={() => setCompareMode((m) => !m)}
+          onToggleCompare={handleCompareToggle}
         />
 
         {compareMode ? (
-          <CompareView selectedFile={selectedFile} onFileSelect={setSelectedFile} />
+          <CompareView
+            selectedFile={selectedFile}
+            onFileSelect={setSelectedFile}
+            onDirtyChange={setCompareHasUnsavedChanges}
+          />
         ) : !selectedFile ? (
           <div className="flex-1 flex flex-col items-center justify-center text-gray-500 gap-3">
             <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -575,13 +789,32 @@ export default function EditorPage() {
               <div className="hidden md:block w-px bg-gray-700 shrink-0" />
 
               <div className={`flex-1 flex overflow-hidden ${mobileView === 'edit' ? 'hidden md:flex' : 'flex'}`}>
-                <PreviewPane content={content} />
+                <PreviewPane content={content} jumpToHeadingToken={jumpToHeadingToken} />
               </div>
             </div>
 
             <aside className="hidden lg:flex w-80 border-l border-gray-700 bg-gray-900/70 flex-col overflow-hidden">
               <div className="p-3 border-b border-gray-700 space-y-3">
                 <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Revision details</h2>
+
+                <label className="block text-xs text-gray-300">
+                  Status pipeline
+                  <div className="mt-1 flex gap-1.5">
+                    <input
+                      className="flex-1 bg-gray-800 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-100"
+                      value={statusPipelineInput}
+                      onChange={(e) => setStatusPipelineInput(e.target.value)}
+                      placeholder="Draft → In Review → Approved → Published"
+                    />
+                    <button
+                      type="button"
+                      className="px-2 py-1 text-[11px] rounded bg-gray-700 hover:bg-gray-600 text-gray-100"
+                      onClick={applyStatusPipelineInput}
+                    >
+                      Apply
+                    </button>
+                  </div>
+                </label>
 
                 <label className="block text-xs text-gray-300">
                   Note
@@ -601,7 +834,7 @@ export default function EditorPage() {
                     onChange={(e) => setStatus((e.target.value as RevisionStatus) || '')}
                   >
                     <option value="">No status</option>
-                    {STATUS_OPTIONS.map((option) => (
+                    {statusOptions.map((option) => (
                       <option key={option.value} value={option.value}>{option.label}</option>
                     ))}
                   </select>
@@ -614,8 +847,76 @@ export default function EditorPage() {
                     value={tagsInput}
                     onChange={(e) => setTagsInput(e.target.value)}
                     placeholder="planning, scope"
+                    list="known-tags"
                   />
+                  <datalist id="known-tags">
+                    {knownTags.map((tag) => (
+                      <option key={tag} value={tag} />
+                    ))}
+                  </datalist>
                 </label>
+
+                <fieldset className="border border-gray-700 rounded p-2">
+                  <legend className="px-1 text-[11px] uppercase tracking-wide text-gray-400">Required before checkpoint</legend>
+                  <div className="mt-1 space-y-1.5 text-xs text-gray-200">
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" checked={requiredFields.note} onChange={(e) => setRequiredFields((prev) => ({ ...prev, note: e.target.checked }))} />
+                      Note
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" checked={requiredFields.status} onChange={(e) => setRequiredFields((prev) => ({ ...prev, status: e.target.checked }))} />
+                      Status
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" checked={requiredFields.tags} onChange={(e) => setRequiredFields((prev) => ({ ...prev, tags: e.target.checked }))} />
+                      At least one tag
+                    </label>
+                  </div>
+                </fieldset>
+
+                {checkpointWarning && (
+                  <p className="text-[11px] text-amber-300 bg-amber-900/30 border border-amber-700 rounded px-2 py-1.5">
+                    {checkpointWarning}
+                  </p>
+                )}
+              </div>
+
+              <div className="p-3 border-b border-gray-700 space-y-3">
+                <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Publishing pipeline</h2>
+                <div className="grid grid-cols-3 gap-1.5">
+                  <button onClick={() => handleExport('html')} className="rounded bg-gray-800 hover:bg-gray-700 px-2 py-1 text-[11px] text-gray-200">Export HTML</button>
+                  <button onClick={() => handleExport('pdf')} className="rounded bg-gray-800 hover:bg-gray-700 px-2 py-1 text-[11px] text-gray-200">Export PDF</button>
+                  <button onClick={() => handleExport('docx')} className="rounded bg-gray-800 hover:bg-gray-700 px-2 py-1 text-[11px] text-gray-200">Export DOCX</button>
+                </div>
+
+                <label className="block text-xs text-gray-300">
+                  Publish target
+                  <select
+                    className="mt-1 w-full bg-gray-800 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-100"
+                    value={publishProfileId}
+                    onChange={(e) => setPublishProfileId(e.target.value)}
+                  >
+                    {(publishProfiles.length
+                      ? publishProfiles
+                      : [{ id: 'docs-site', label: 'Docs site', description: 'Default docs site profile', type: 'docs-site' as const }]).map((profile) => (
+                      <option key={profile.id} value={profile.id}>{profile.label}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <button
+                  onClick={handlePublish}
+                  disabled={isPublishing || latestRevisionStatus !== 'accepted'}
+                  className="w-full rounded bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-700 disabled:text-gray-500 px-2 py-1.5 text-xs text-white"
+                  title={latestRevisionStatus !== 'accepted' ? 'Mark latest revision as Accepted to enable one-click publish.' : 'Publish selected target from approved status'}
+                >
+                  {isPublishing ? 'Publishing…' : 'One-click publish (approved only)'}
+                </button>
+
+                <p className="text-[11px] text-gray-400">
+                  Latest status: <span className="text-gray-200">{latestRevisionStatus || 'none'}</span>
+                </p>
+                {publishMessage && <p className="text-[11px] text-blue-300">{publishMessage}</p>}
               </div>
 
               <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2">
@@ -629,11 +930,16 @@ export default function EditorPage() {
                   [...revisions].reverse().map((revision) => (
                     <button
                       key={revision.id}
-                      className="w-full text-left p-2 rounded border border-gray-700 bg-gray-900 hover:bg-gray-800"
+                      className={`w-full text-left p-2 rounded border hover:bg-gray-800 ${
+                        selectedRevisionIds.includes(revision.id)
+                          ? 'border-blue-500 bg-blue-950/30'
+                          : 'border-gray-700 bg-gray-900'
+                      }`}
                       onClick={() => {
                         setRevisionNote(revision.note ?? '');
                         setStatus(revision.status ?? '');
                         setTagsInput((revision.tags ?? []).join(', '));
+                        toggleRevisionSelection(revision.id);
                       }}
                     >
                       <p className="text-[11px] text-gray-500">
@@ -654,6 +960,11 @@ export default function EditorPage() {
                           </span>
                         ))}
                       </div>
+                      <p className="mt-1 text-[10px] text-gray-400">
+                        +{revisionSummaries[revision.id]?.addedChars ?? 0} / -{revisionSummaries[revision.id]?.removedChars ?? 0} chars
+                        {' · '}
+                        H+{revisionSummaries[revision.id]?.addedHeadings ?? 0} / H-{revisionSummaries[revision.id]?.removedHeadings ?? 0}
+                      </p>
                     </button>
                   ))
                 )}
