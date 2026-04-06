@@ -11,6 +11,7 @@ interface SaveContentOptions {
   status?: RevisionStatus;
 }
 
+// Public hook/helper: called from UI code to encapsulate shared stateful behavior.
 export function useFileContent(filename: string | null, revisionId?: string | null) {
   const key = filename
     ? `/api/files/${encodeURIComponent(filename)}${revisionId ? `?revisionId=${encodeURIComponent(revisionId)}` : ''}`

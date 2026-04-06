@@ -5,6 +5,7 @@ import { FileEntry, FileListResponse } from '@/types';
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
+// Public hook/helper: called from UI code to encapsulate shared stateful behavior.
 export function useFiles() {
   const { data, error, isLoading, mutate } = useSWR<FileListResponse>('/api/files', fetcher);
 

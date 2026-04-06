@@ -14,6 +14,7 @@ interface ToolbarProps {
   onToggleCompare: () => void;
 }
 
+// Helper function: keeps a small, testable transformation isolated from UI side effects.
 function formatCheckpointTimestamp(timestamp: string | null): string {
   if (!timestamp) return 'No checkpoint saved yet';
   return new Intl.DateTimeFormat(undefined, {
@@ -22,6 +23,7 @@ function formatCheckpointTimestamp(timestamp: string | null): string {
   }).format(new Date(timestamp));
 }
 
+// Main component export: this is the entry point rendered by parent routes/components.
 export default function Toolbar({
   filename,
   isDirty,

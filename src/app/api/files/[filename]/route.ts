@@ -7,6 +7,7 @@ type Params = { params: Promise<{ filename: string }> };
 
 const VALID_STATUSES: RevisionStatus[] = ['accepted', 'rejected', 'needs-review'];
 
+// Helper function: keeps a small, testable transformation isolated from UI side effects.
 function parseStatus(input: unknown): RevisionStatus | undefined {
   if (input === undefined || input === null || input === '') return undefined;
   if (typeof input !== 'string') {
@@ -18,6 +19,7 @@ function parseStatus(input: unknown): RevisionStatus | undefined {
   return input as RevisionStatus;
 }
 
+// Helper function: keeps a small, testable transformation isolated from UI side effects.
 function parseTags(input: unknown): string[] {
   if (input === undefined || input === null) return [];
   if (!Array.isArray(input)) {
@@ -29,6 +31,7 @@ function parseTags(input: unknown): string[] {
     .filter(Boolean);
 }
 
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function GET(_request: NextRequest, { params }: Params) {
   const { filename } = await params;
   try {
@@ -42,6 +45,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
   }
 }
 
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function PUT(request: NextRequest, { params }: Params) {
   const { filename } = await params;
   try {
@@ -109,6 +113,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
   }
 }
 
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function DELETE(_request: NextRequest, { params }: Params) {
   const { filename } = await params;
   try {

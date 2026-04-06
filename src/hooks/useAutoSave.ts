@@ -12,6 +12,7 @@ interface UseAutoSaveOptions {
   debounceMs?: number;
 }
 
+// Public hook/helper: called from UI code to encapsulate shared stateful behavior.
 export function useAutoSave({
   content,
   filename,
