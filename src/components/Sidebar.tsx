@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFiles } from '@/hooks/useFiles';
 import { FileEntry } from '@/types';
+import { buildFileApiPath } from '@/lib/fileApiPath';
 
 interface SidebarProps {
   selectedFile: string | null;
@@ -136,7 +137,9 @@ function parseMetaFromContent(content: string): RevisionMeta {
 }
 
 function parseFileStructure(fileName: string) {
-  const stem = fileName.replace(/\.md$/, '');
+  const normalized = fileName.replace(/^\/+/, '');
+  const parts = normalized.split('/').filter(Boolean);
+  const stem = (parts[parts.length - 1] ?? normalized).replace(/\.md$/, '');
   const tokens = stem.split(/[\s._-]+/).filter(Boolean);
 
   let revisionOrder: number | null = null;
@@ -169,7 +172,7 @@ function parseFileStructure(fileName: string) {
     }
   }
 
-  let document = 'Ungrouped';
+  let document = parts.slice(0, -1).join('/') || 'Ungrouped';
   let chapter = 'General';
 
   if (chapterIndex >= 0) {
@@ -184,11 +187,8 @@ function parseFileStructure(fileName: string) {
     if (docTokens.length > 0) {
       document = docTokens.join(' ');
     }
-  } else if (tokens.length > 1) {
-    document = tokens[0];
-    chapter = tokens[1];
-  } else if (tokens.length === 1) {
-    document = tokens[0];
+  } else if (tokens.length > 0) {
+    chapter = stem;
   }
 
   return {
@@ -230,7 +230,7 @@ export default function Sidebar({
       await Promise.all(
         files.map(async (file) => {
           try {
-            const res = await fetch(`/api/files/${encodeURIComponent(file.name)}`);
+            const res = await fetch(buildFileApiPath(file.name));
             if (!res.ok) return;
             const payload = (await res.json()) as { content?: string };
             nextMeta[file.name] = parseMetaFromContent(payload.content ?? '');

@@ -2,6 +2,7 @@
 
 import useSWR from 'swr';
 import { FileContentResponse, Revision, RevisionStatus } from '@/types';
+import { buildFileApiPath } from '@/lib/fileApiPath';
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -13,7 +14,7 @@ interface SaveContentOptions {
 
 export function useFileContent(filename: string | null, revisionId?: string | null) {
   const key = filename
-    ? `/api/files/${encodeURIComponent(filename)}${revisionId ? `?revisionId=${encodeURIComponent(revisionId)}` : ''}`
+    ? `${buildFileApiPath(filename)}${revisionId ? `?revisionId=${encodeURIComponent(revisionId)}` : ''}`
     : null;
   const { data, error, isLoading, mutate } = useSWR<FileContentResponse>(key, fetcher, {
     revalidateOnFocus: false,
@@ -21,7 +22,7 @@ export function useFileContent(filename: string | null, revisionId?: string | nu
 
   async function saveContent(content: string, options: SaveContentOptions = {}): Promise<void> {
     if (!filename) return;
-    const res = await fetch(`/api/files/${encodeURIComponent(filename)}`, {
+    const res = await fetch(buildFileApiPath(filename), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -42,7 +43,7 @@ export function useFileContent(filename: string | null, revisionId?: string | nu
 
   async function promoteRevisionAsDraft(nextRevisionId: string): Promise<void> {
     if (!filename) return;
-    const res = await fetch(`/api/files/${encodeURIComponent(filename)}/draft`, {
+    const res = await fetch(buildFileApiPath(filename, '/draft'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ revisionId: nextRevisionId }),

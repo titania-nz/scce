@@ -3,7 +3,15 @@ import { readFile, writeFile, deleteFile, renameFile } from '@/lib/fileStorage';
 import { deleteRevisions, readRevisions, renameRevisions, writeRevisions } from '@/lib/revisionStorage';
 import { Revision, RevisionStatus } from '@/types';
 
-type Params = { params: Promise<{ filename: string }> };
+type Params = { params: Promise<{ filename: string[] }> };
+
+function parseFilename(segments: string[]): string {
+  const filename = segments.join('/');
+  if (!filename) {
+    throw Object.assign(new Error('Invalid filename'), { status: 400 });
+  }
+  return filename;
+}
 
 const VALID_STATUSES: RevisionStatus[] = ['accepted', 'rejected', 'needs-review'];
 
@@ -30,8 +38,9 @@ function parseTags(input: unknown): string[] {
 }
 
 export async function GET(_request: NextRequest, { params }: Params) {
-  const { filename } = await params;
+  const { filename: rawFilename } = await params;
   try {
+    const filename = parseFilename(rawFilename);
     const [content, revisions] = await Promise.all([readFile(filename), readRevisions(filename)]);
     return NextResponse.json({ name: filename, content, revisions });
   } catch (err: unknown) {
@@ -43,8 +52,9 @@ export async function GET(_request: NextRequest, { params }: Params) {
 }
 
 export async function PUT(request: NextRequest, { params }: Params) {
-  const { filename } = await params;
+  const { filename: rawFilename } = await params;
   try {
+    const filename = parseFilename(rawFilename);
     const body = await request.json();
 
     if ('newName' in body) {
@@ -110,8 +120,9 @@ export async function PUT(request: NextRequest, { params }: Params) {
 }
 
 export async function DELETE(_request: NextRequest, { params }: Params) {
-  const { filename } = await params;
+  const { filename: rawFilename } = await params;
   try {
+    const filename = parseFilename(rawFilename);
     await deleteFile(filename);
     await deleteRevisions(filename);
     return NextResponse.json({ success: true });

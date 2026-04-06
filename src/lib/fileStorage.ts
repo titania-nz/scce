@@ -10,7 +10,7 @@ import {
   RevisionEntry,
 } from '@/types';
 
-const VALID_FILENAME = /^[a-zA-Z0-9_\-. ]+\.md$/;
+const VALID_FILENAME = /^[a-zA-Z0-9_\-. /]+\.md$/;
 const MAX_FILENAME_LENGTH = 255;
 
 const DOCUMENTS_DIRNAME = '.documents';
@@ -293,6 +293,13 @@ export function resolveSafePath(filename: string): string {
   if (!VALID_FILENAME.test(filename)) {
     throw Object.assign(new Error('Invalid filename'), { status: 400 });
   }
+  if (filename.includes('\\')) {
+    throw Object.assign(new Error('Invalid filename'), { status: 400 });
+  }
+  const segments = filename.split('/');
+  if (segments.some((segment) => !segment || segment === '.' || segment === '..')) {
+    throw Object.assign(new Error('Invalid filename'), { status: 400 });
+  }
   if (isNetlifyRuntime) {
     return filename;
   }
@@ -441,7 +448,13 @@ export async function listFiles(): Promise<FileEntry[]> {
     if (!store) return [];
     const { blobs } = await store.list();
     const files = blobs
-      .filter((blob) => blob.key.endsWith('.md') && VALID_FILENAME.test(blob.key))
+      .filter(
+        (blob) =>
+          blob.key.endsWith('.md') &&
+          !blob.key.startsWith('__revisions__/') &&
+          !blob.key.startsWith('documents/') &&
+          VALID_FILENAME.test(blob.key),
+      )
       .map((blob) => ({
         name: blob.key,
         mtime: new Date().toISOString(),
@@ -459,25 +472,46 @@ export async function listFiles(): Promise<FileEntry[]> {
   }
 
   const dir = getNotesDir();
-  const entries = fs.readdirSync(dir);
-  const files = entries
-    .filter((name) => name.endsWith('.md') && VALID_FILENAME.test(name))
-    .map((name) => {
-      const stat = fs.statSync(path.join(dir, name));
-      return {
-        name,
+  const files: FileEntry[] = [];
+
+  const walk = (relativeDir = ''): void => {
+    const currentDir = path.join(dir, relativeDir);
+    const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const nextRelative = relativeDir ? path.posix.join(relativeDir, entry.name) : entry.name;
+      if (entry.isDirectory()) {
+        if (entry.name.startsWith('.')) {
+          continue;
+        }
+        walk(nextRelative);
+        continue;
+      }
+
+      if (!entry.isFile() || !nextRelative.endsWith('.md') || !VALID_FILENAME.test(nextRelative)) {
+        continue;
+      }
+
+      const stat = fs.statSync(path.join(dir, nextRelative));
+      files.push({
+        name: nextRelative,
         mtime: stat.mtime.toISOString(),
         ctime: stat.birthtime.toISOString(),
         size: stat.size,
-      };
-    })
+      });
+    }
+  };
+
+  walk();
+
+  const sortedFiles = files
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  for (const file of files) {
+  for (const file of sortedFiles) {
     await migrateLegacyFileToInitialRevision(file.name);
   }
 
-  return files;
+  return sortedFiles;
 }
 
 export async function readFile(filename: string): Promise<string> {
@@ -520,6 +554,7 @@ export async function writeFile(filename: string, content: string): Promise<void
     await store.set(key, content);
   } else {
     const filePath = key;
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
     const tmpPath = filePath + '.tmp';
     fs.writeFileSync(tmpPath, content, 'utf-8');
     fs.renameSync(tmpPath, filePath);
@@ -624,6 +659,7 @@ export async function renameFile(oldName: string, newName: string): Promise<void
     if (fs.existsSync(newPath)) {
       throw Object.assign(new Error('File already exists'), { status: 409 });
     }
+    fs.mkdirSync(path.dirname(newPath), { recursive: true });
     fs.renameSync(oldPath, newPath);
   }
 
