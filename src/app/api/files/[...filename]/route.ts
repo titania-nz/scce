@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readFile, writeFile, deleteFile, renameFile } from '@/lib/fileStorage';
 
-type Params = { params: Promise<{ filename: string[] | string }> };
+type Params = { params: Promise<{ filename: string[] }> };
 
-function getFilename(parts: string[] | string): string {
-  if (Array.isArray(parts)) return parts.join('/');
-  return parts;
+function getFilename(parts: string[]): string {
+  return parts.join('/');
 }
 
 export async function GET(_request: NextRequest, { params }: Params) {
@@ -15,7 +14,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
     const content = await readFile(resolvedName);
     return NextResponse.json({ name: resolvedName, content });
   } catch (err: unknown) {
-    const e = err as { status?: number; message?: string };
+    const e = err as { status?: number };
     if (e.status === 404) return NextResponse.json({ error: 'File not found' }, { status: 404 });
     if (e.status === 400) return NextResponse.json({ error: 'Invalid filename' }, { status: 400 });
     return NextResponse.json({ error: 'Could not read file' }, { status: 500 });
@@ -35,16 +34,18 @@ export async function PUT(request: NextRequest, { params }: Params) {
       }
       await renameFile(resolvedName, newName);
       return NextResponse.json({ name: newName });
-    } else if ('content' in body) {
+    }
+
+    if ('content' in body) {
       const { content } = body;
       if (typeof content !== 'string') {
         return NextResponse.json({ error: 'Invalid content' }, { status: 400 });
       }
       await writeFile(resolvedName, content);
       return NextResponse.json({ name: resolvedName });
-    } else {
-      return NextResponse.json({ error: 'Missing content or newName' }, { status: 400 });
     }
+
+    return NextResponse.json({ error: 'Missing content or newName' }, { status: 400 });
   } catch (err: unknown) {
     const e = err as { status?: number; message?: string };
     if (e.status === 404) return NextResponse.json({ error: 'File not found' }, { status: 404 });
@@ -61,7 +62,7 @@ export async function DELETE(_request: NextRequest, { params }: Params) {
     await deleteFile(resolvedName);
     return NextResponse.json({ success: true });
   } catch (err: unknown) {
-    const e = err as { status?: number; message?: string };
+    const e = err as { status?: number };
     if (e.status === 404) return NextResponse.json({ error: 'File not found' }, { status: 404 });
     if (e.status === 400) return NextResponse.json({ error: 'Invalid filename' }, { status: 400 });
     return NextResponse.json({ error: 'Could not delete file' }, { status: 500 });

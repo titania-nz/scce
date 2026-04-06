@@ -55,31 +55,10 @@ export default function Sidebar({
   const [renamingFile, setRenamingFile] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['']));
-  const [pathSearch, setPathSearch] = useState('');
-  const [nameSearch, setNameSearch] = useState('');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const filteredFiles = useMemo(() => {
-    const pathFilter = pathSearch.trim().toLowerCase();
-    const nameFilter = nameSearch.trim().toLowerCase();
-    const fromDate = dateFrom ? new Date(`${dateFrom}T00:00:00`) : null;
-    const toDate = dateTo ? new Date(`${dateTo}T23:59:59`) : null;
-
-    return files.filter((file) => {
-      const fileDate = new Date(file.mtime);
-      const chapterMatches = !pathFilter || file.name.toLowerCase().includes(pathFilter);
-      const fileName = file.name.split('/').at(-1)?.toLowerCase() ?? file.name.toLowerCase();
-      const metaMatches = !nameFilter || fileName.includes(nameFilter);
-      const fromMatches = !fromDate || fileDate >= fromDate;
-      const toMatches = !toDate || fileDate <= toDate;
-      return chapterMatches && metaMatches && fromMatches && toMatches;
-    });
-  }, [pathSearch, dateFrom, dateTo, files, nameSearch]);
-
-  const tree = useMemo(() => buildTree(filteredFiles), [filteredFiles]);
+  const tree = useMemo(() => buildTree(files), [files]);
 
   function resetNewInput() {
     setShowNewInput(false);
@@ -251,15 +230,19 @@ export default function Sidebar({
                   title="Rename"
                   aria-label={`Rename ${file.name}`}
                 >
-                  ✎
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
                 </button>
                 <button
                   onClick={(e) => { e.stopPropagation(); handleDelete(file); }}
-                  className="text-gray-500 hover:text-red-400 p-0.5"
+                  className="text-gray-400 hover:text-red-400 p-0.5"
                   title="Delete"
                   aria-label={`Delete ${file.name}`}
                 >
-                  ✕
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
                 </button>
               </div>
             </>
@@ -272,7 +255,7 @@ export default function Sidebar({
   }
 
   return (
-    <aside className="flex flex-col h-full bg-gray-900 text-gray-100 w-80 shrink-0 border-r border-gray-800">
+    <aside className="flex flex-col h-full bg-gray-900 text-gray-100 w-64 shrink-0">
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
         <span className="text-sm font-semibold text-gray-300 uppercase tracking-wider">Files</span>
         <div className="flex items-center gap-2">
@@ -282,7 +265,9 @@ export default function Sidebar({
             title="Paste from clipboard"
             aria-label="Paste from clipboard"
           >
-            📋
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+            </svg>
           </button>
           <button
             onClick={() => fileInputRef.current?.click()}
@@ -290,7 +275,9 @@ export default function Sidebar({
             title="Upload file"
             aria-label="Upload file"
           >
-            ⤴
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+            </svg>
           </button>
           <input
             ref={fileInputRef}
@@ -306,42 +293,11 @@ export default function Sidebar({
             title="New file"
             aria-label="New file"
           >
-            ＋
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
           </button>
         </div>
-      </div>
-
-      <div className="px-3 py-2 border-b border-gray-700 space-y-2">
-        <input
-          type="text"
-          value={pathSearch}
-          onChange={(e) => setPathSearch(e.target.value)}
-          placeholder="Filter by path"
-          className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
-        />
-        <div className="grid grid-cols-2 gap-2">
-          <input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-            className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
-            aria-label="Modified from date"
-          />
-          <input
-            type="date"
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-            className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
-            aria-label="Modified to date"
-          />
-        </div>
-        <input
-          type="text"
-          value={nameSearch}
-          onChange={(e) => setNameSearch(e.target.value)}
-          placeholder="Filter by filename"
-          className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
-        />
       </div>
 
       {error && (
@@ -353,7 +309,12 @@ export default function Sidebar({
       {showNewInput && (
         <div className="px-3 py-2 border-b border-gray-700">
           {clipboardContent !== null && (
-            <div className="text-xs text-blue-400 mb-1.5">Clipboard content ready</div>
+            <div className="flex items-center gap-1 text-xs text-blue-400 mb-1.5">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              </svg>
+              Clipboard content ready
+            </div>
           )}
           <input
             type="text"
@@ -388,8 +349,8 @@ export default function Sidebar({
         {isLoading && (
           <div className="px-4 py-3 text-sm text-gray-500">Loading...</div>
         )}
-        {!isLoading && filteredFiles.length === 0 && (
-          <div className="px-4 py-3 text-sm text-gray-500">No matching files</div>
+        {!isLoading && files.length === 0 && (
+          <div className="px-4 py-3 text-sm text-gray-500">No files yet</div>
         )}
         {!isLoading && renderTree(tree)}
       </div>

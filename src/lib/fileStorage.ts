@@ -21,7 +21,7 @@ function getBlobStore() {
 
 export function getNotesDir(): string {
   if (isNetlifyRuntime) {
-    return ''; // Not used
+    return '';
   }
   const dir = process.env.NOTES_DIR ?? path.join(process.cwd(), 'notes');
   fs.mkdirSync(dir, { recursive: true });
@@ -44,8 +44,7 @@ function validateFilename(filename: string): string {
     throw Object.assign(new Error('Invalid filename'), { status: 400 });
   }
 
-  const lastSegment = segments[segments.length - 1];
-  if (!lastSegment.endsWith('.md')) {
+  if (!segments[segments.length - 1].endsWith('.md')) {
     throw Object.assign(new Error('Filename must end with .md'), { status: 400 });
   }
 
@@ -69,7 +68,7 @@ export function resolveSafePath(filename: string): string {
   const safeName = validateFilename(filename);
 
   if (isNetlifyRuntime) {
-    return safeName; // Just return the filename for blob store
+    return safeName;
   }
 
   const notesDir = getNotesDir();
@@ -97,11 +96,7 @@ function walkMarkdownFiles(baseDir: string, currentDir = baseDir): FileEntry[] {
 
     const relativeName = path.relative(baseDir, fullPath).split(path.sep).join('/');
     const stat = fs.statSync(fullPath);
-    files.push({
-      name: relativeName,
-      mtime: stat.mtime.toISOString(),
-      size: stat.size,
-    });
+    files.push({ name: relativeName, mtime: stat.mtime.toISOString(), size: stat.size });
   }
 
   return files;
@@ -147,11 +142,11 @@ export async function readFile(filename: string): Promise<string> {
       throw Object.assign(new Error('File not found'), { status: 404 });
     }
   }
-  const filePath = key;
-  if (!fs.existsSync(filePath)) {
+
+  if (!fs.existsSync(key)) {
     throw Object.assign(new Error('File not found'), { status: 404 });
   }
-  return fs.readFileSync(filePath, 'utf-8');
+  return fs.readFileSync(key, 'utf-8');
 }
 
 export async function writeFile(filename: string, content: string): Promise<void> {
@@ -163,11 +158,10 @@ export async function writeFile(filename: string, content: string): Promise<void
     return;
   }
 
-  const filePath = key;
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  const tmpPath = filePath + '.tmp';
+  fs.mkdirSync(path.dirname(key), { recursive: true });
+  const tmpPath = key + '.tmp';
   fs.writeFileSync(tmpPath, content, 'utf-8');
-  fs.renameSync(tmpPath, filePath);
+  fs.renameSync(tmpPath, key);
 }
 
 export async function deleteFile(filename: string): Promise<void> {
@@ -183,12 +177,11 @@ export async function deleteFile(filename: string): Promise<void> {
     return;
   }
 
-  const filePath = key;
-  if (!fs.existsSync(filePath)) {
+  if (!fs.existsSync(key)) {
     throw Object.assign(new Error('File not found'), { status: 404 });
   }
-  fs.unlinkSync(filePath);
-  removeEmptyParentDirs(filePath, getNotesDir());
+  fs.unlinkSync(key);
+  removeEmptyParentDirs(key, getNotesDir());
 }
 
 export async function renameFile(oldName: string, newName: string): Promise<void> {
@@ -208,18 +201,16 @@ export async function renameFile(oldName: string, newName: string): Promise<void
     return;
   }
 
-  const oldPath = oldKey;
-  const newPath = newKey;
-  if (!fs.existsSync(oldPath)) {
+  if (!fs.existsSync(oldKey)) {
     throw Object.assign(new Error('File not found'), { status: 404 });
   }
-  if (fs.existsSync(newPath)) {
+  if (fs.existsSync(newKey)) {
     throw Object.assign(new Error('File already exists'), { status: 409 });
   }
 
-  fs.mkdirSync(path.dirname(newPath), { recursive: true });
-  fs.renameSync(oldPath, newPath);
-  removeEmptyParentDirs(oldPath, getNotesDir());
+  fs.mkdirSync(path.dirname(newKey), { recursive: true });
+  fs.renameSync(oldKey, newKey);
+  removeEmptyParentDirs(oldKey, getNotesDir());
 }
 
 export async function fileExists(filename: string): Promise<boolean> {
@@ -235,8 +226,7 @@ export async function fileExists(filename: string): Promise<boolean> {
         return false;
       }
     }
-    const filePath = key;
-    return fs.existsSync(filePath);
+    return fs.existsSync(key);
   } catch {
     return false;
   }
