@@ -143,7 +143,7 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
   }, [createFile, files, selectedA, selectedB]);
 
   const handleFinalize = useCallback(async () => {
-    if (!targetFilename.trim()) {
+    if (!targetFilename || !targetFilename.trim()) {
       setErrorMessage('Choose a target file before finalizing.');
       return;
     }
