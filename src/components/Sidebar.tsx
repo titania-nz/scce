@@ -64,6 +64,21 @@ function formatSize(size: number): string {
 }
 
 // Helper function: keeps a small, testable transformation isolated from UI side effects.
+function makeUploadFilename(originalName: string, takenNames: Set<string>): string {
+  const source = originalName.includes('.') ? originalName.replace(/\.[^.]*$/, '') : originalName;
+  const sanitizedBase = source.replace(/[^a-zA-Z0-9_\-. ]/g, '_').trim() || 'upload';
+
+  let candidate = `${sanitizedBase}.md`;
+  let suffix = 1;
+  while (takenNames.has(candidate)) {
+    candidate = `${sanitizedBase}-${suffix}.md`;
+    suffix += 1;
+  }
+  takenNames.add(candidate);
+  return candidate;
+}
+
+// Helper function: keeps a small, testable transformation isolated from UI side effects.
 function splitFrontmatter(content: string): { frontmatter: string; body: string } {
   if (!content.startsWith('---\n')) {
     return { frontmatter: '', body: content };
@@ -320,6 +335,62 @@ export default function Sidebar({
     return output;
   }, [chapterSearch, dateFrom, dateTo, files, metaSearch, revisionMetaByFile]);
 
+  useEffect(() => {
+    if (selectedFile) {
+      return;
+    }
+
+    function hasDropFiles(event: DragEvent): boolean {
+      const types = event.dataTransfer?.types;
+      if (!types) return false;
+      return Array.from(types).includes('Files');
+    }
+
+    async function importFiles(inputFiles: FileList | null) {
+      if (!inputFiles || inputFiles.length === 0) {
+        return;
+      }
+
+      setError(null);
+      let lastCreated: string | null = null;
+      const takenNames = new Set(files.map((file) => file.name));
+
+      for (const file of Array.from(inputFiles)) {
+        try {
+          const content = await file.text();
+          const name = makeUploadFilename(file.name, takenNames);
+          await createFile(name, content);
+          lastCreated = name;
+        } catch (err: unknown) {
+          const e = err as { message?: string };
+          setError(e.message ?? `Could not import ${file.name}`);
+        }
+      }
+
+      if (lastCreated) {
+        onFileSelect(lastCreated);
+      }
+    }
+
+    const onDragOver = (event: DragEvent) => {
+      if (!hasDropFiles(event)) return;
+      event.preventDefault();
+    };
+
+    const onDrop = (event: DragEvent) => {
+      if (!hasDropFiles(event)) return;
+      event.preventDefault();
+      void importFiles(event.dataTransfer?.files ?? null);
+    };
+
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('drop', onDrop);
+    return () => {
+      window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('drop', onDrop);
+    };
+  }, [createFile, files, onFileSelect, selectedFile]);
+
   function resetNewInput() {
     setShowNewInput(false);
     setNewFileName('');
@@ -355,17 +426,21 @@ export default function Sidebar({
   }
 
   async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    if (selectedFile) {
+      setError('Upload is only available when no file is selected.');
+      e.target.value = '';
+      return;
+    }
+
     const picked = e.target.files;
     if (!picked || picked.length === 0) return;
     setError(null);
     let lastCreated: string | null = null;
+    const takenNames = new Set(files.map((file) => file.name));
     for (const file of Array.from(picked)) {
       try {
         const content = await file.text();
-        const base = file.name.includes('.')
-          ? file.name.replace(/\.[^.]*$/, '')
-          : file.name;
-        const name = `${base.replace(/[^a-zA-Z0-9_\-. ]/g, '_')}.md`;
+        const name = makeUploadFilename(file.name, takenNames);
         await createFile(name, content);
         lastCreated = name;
       } catch (err: unknown) {
@@ -441,9 +516,10 @@ export default function Sidebar({
           </button>
           <button
             onClick={() => fileInputRef.current?.click()}
-            className="text-gray-400 hover:text-white transition-colors"
-            title="Upload file"
+            className="text-gray-400 hover:text-white disabled:text-gray-600 disabled:cursor-not-allowed transition-colors"
+            title={selectedFile ? 'Clear the current selection to upload files' : 'Upload file'}
             aria-label="Upload file"
+            disabled={Boolean(selectedFile)}
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
