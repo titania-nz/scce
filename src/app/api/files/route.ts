@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createRevision, fileExists, listFiles, writeFile } from '@/lib/fileStorage';
+import { fileExists, listFiles, writeFile } from '@/lib/fileStorage';
 
 // API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function GET() {
@@ -28,7 +28,6 @@ export async function POST(request: NextRequest) {
     }
 
     await writeFile(name, content);
-    await createRevision(name, content, { setAsDraft: true });
     return NextResponse.json({ name }, { status: 201 });
   } catch (err: unknown) {
     const e = err as { status?: number; message?: string };
