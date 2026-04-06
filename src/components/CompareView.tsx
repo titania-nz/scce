@@ -1,9 +1,10 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useFiles } from '@/hooks/useFiles';
 import { useFileContent } from '@/hooks/useFileContent';
-import DiffView from './DiffView';
+import { computeDiff } from '@/lib/diffUtils';
+import DiffView, { HunkMergeState } from './DiffView';
 
 interface CompareViewProps {
   selectedFile?: string | null;
@@ -38,9 +39,69 @@ export default function CompareView({ selectedFile = null, onFileSelect }: Compa
 
   const effectiveContentA = selectedRevisionA?.content ?? contentA;
   const effectiveContentB = selectedRevisionB?.content ?? contentB;
+  const diff = useMemo(
+    () => computeDiff(effectiveContentA ?? '', effectiveContentB ?? ''),
+    [effectiveContentA, effectiveContentB],
+  );
+
+  const [mergeStateByHunk, setMergeStateByHunk] = useState<Record<number, HunkMergeState>>({});
+  const [editedContentByHunk, setEditedContentByHunk] = useState<Record<number, string>>({});
+  const [mergedOutput, setMergedOutput] = useState('');
 
   const headerA = selectedRevisionA?.note ? `${selectedA} - ${selectedRevisionA.note}` : selectedA ?? '';
   const headerB = selectedRevisionB?.note ? `${selectedB} - ${selectedRevisionB.note}` : selectedB ?? '';
+  const hasDiff = !diff.isIdentical && diff.hunks.length > 0;
+
+  useEffect(() => {
+    setMergeStateByHunk(() =>
+      Object.fromEntries(diff.hunks.map((hunk) => [hunk.id, 'unresolved' satisfies HunkMergeState])),
+    );
+    setEditedContentByHunk({});
+  }, [diff.hunks, selectedA, selectedB, revisionA, revisionB]);
+
+  const unresolvedCount = useMemo(
+    () => diff.hunks.filter((hunk) => (mergeStateByHunk[hunk.id] ?? 'unresolved') === 'unresolved').length,
+    [diff.hunks, mergeStateByHunk],
+  );
+  const canFinalizeMerge = !hasDiff || unresolvedCount === 0;
+
+  const mergedOutputDraft = useMemo(() => {
+    if (!effectiveContentA && !effectiveContentB) return '';
+    if (diff.isIdentical || diff.hunks.length === 0) return effectiveContentB ?? effectiveContentA ?? '';
+
+    const out: string[] = [];
+    let cursor = 0;
+
+    for (const hunk of diff.hunks) {
+      for (let i = cursor; i < hunk.start; i++) {
+        out.push(diff.flatLines[i].text);
+      }
+
+      const state = mergeStateByHunk[hunk.id] ?? 'unresolved';
+      if (state === 'edited') {
+        const edited = editedContentByHunk[hunk.id] ?? '';
+        if (edited.length > 0) out.push(...edited.split('\n'));
+      } else {
+        const takeB = state === 'takeB' || state === 'unresolved';
+        for (const line of hunk.lines) {
+          if (takeB && line.kind !== 'removed') out.push(line.text);
+          if (!takeB && state === 'takeA' && line.kind !== 'added') out.push(line.text);
+        }
+      }
+
+      cursor = hunk.end + 1;
+    }
+
+    for (let i = cursor; i < diff.flatLines.length; i++) {
+      out.push(diff.flatLines[i].text);
+    }
+
+    return out.join('\n');
+  }, [diff, editedContentByHunk, effectiveContentA, effectiveContentB, mergeStateByHunk]);
+
+  useEffect(() => {
+    setMergedOutput(mergedOutputDraft);
+  }, [mergedOutputDraft]);
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -118,12 +179,55 @@ export default function CompareView({ selectedFile = null, onFileSelect }: Compa
           Loading...
         </div>
       ) : (
-        <DiffView
-          contentA={effectiveContentA}
-          contentB={effectiveContentB}
-          filenameA={headerA}
-          filenameB={headerB}
-        />
+        <>
+          <DiffView
+            contentA={effectiveContentA}
+            contentB={effectiveContentB}
+            filenameA={headerA}
+            filenameB={headerB}
+            mergeStateByHunk={mergeStateByHunk}
+            editedContentByHunk={editedContentByHunk}
+            onTakeA={(hunkId) => {
+              setMergeStateByHunk((prev) => ({ ...prev, [hunkId]: 'takeA' }));
+            }}
+            onTakeB={(hunkId) => {
+              setMergeStateByHunk((prev) => ({ ...prev, [hunkId]: 'takeB' }));
+            }}
+            onEditHunk={(hunkId) => {
+              setMergeStateByHunk((prev) => ({ ...prev, [hunkId]: 'edited' }));
+              setEditedContentByHunk((prev) => {
+                if (prev[hunkId] !== undefined) return prev;
+                const hunk = diff.hunks.find((nextHunk) => nextHunk.id === hunkId);
+                if (!hunk) return prev;
+                const initial = hunk.lines.filter((line) => line.kind !== 'removed').map((line) => line.text).join('\n');
+                return { ...prev, [hunkId]: initial };
+              });
+            }}
+            onEditedContentChange={(hunkId, value) => {
+              setEditedContentByHunk((prev) => ({ ...prev, [hunkId]: value }));
+            }}
+            actionLabel="Finalize merge"
+            actionHint={canFinalizeMerge ? 'All hunks are resolved' : `${unresolvedCount} unresolved hunk(s) remain`}
+            actionDisabled={!canFinalizeMerge}
+            onAction={() => {
+              // Placeholder entry point for finalize workflow.
+              console.info('Merged output ready', { mergedOutput });
+            }}
+          />
+          <div className="shrink-0 border-t border-gray-700 bg-gray-900 p-3">
+            <div className="mb-1 flex items-center justify-between text-xs">
+              <span className="font-semibold text-gray-300">Merged Output Preview</span>
+              <span className={canFinalizeMerge ? 'text-green-400' : 'text-yellow-400'}>
+                {canFinalizeMerge ? 'Ready to finalize' : `${unresolvedCount} unresolved hunk(s)`}
+              </span>
+            </div>
+            <textarea
+              className="h-36 w-full resize-y rounded border border-gray-700 bg-gray-950 px-2 py-1 font-mono text-xs text-gray-200 focus:border-blue-500 focus:outline-none"
+              readOnly
+              value={mergedOutput}
+            />
+          </div>
+        </>
       )}
     </div>
   );
