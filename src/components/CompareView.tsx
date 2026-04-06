@@ -4,6 +4,8 @@ import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { useFiles } from '@/hooks/useFiles';
 import { useFileContent } from '@/hooks/useFileContent';
+import { buildFileApiPath } from '@/lib/fileApiPath';
+import { RevisionStatus } from '@/types';
 import DiffView from './DiffView';
 
 interface CompareViewProps {
@@ -16,12 +18,19 @@ const EditorPane = dynamic(() => import('./EditorPane'), { ssr: false });
 
 // Main component export: this is the entry point rendered by parent routes/components.
 export default function CompareView({ selectedFile = null, onFileSelect, onDirtyChange }: CompareViewProps) {
-  const { files, createFile } = useFiles();
+  const { files, createFile, mutate: mutateFiles } = useFiles();
   const [selectedA, setSelectedA] = useState<string | null>(selectedFile);
   const [selectedB, setSelectedB] = useState<string | null>(null);
   const [revisionA, setRevisionA] = useState<string>('latest');
   const [revisionB, setRevisionB] = useState<string>('latest');
-  const [targetFilename, setTargetFilename] = useState('');
+  const [destination, setDestination] = useState<'overwrite-a' | 'overwrite-b' | 'new-path'>('overwrite-a');
+  const [newFilePath, setNewFilePath] = useState('');
+  const [isFinalizing, setIsFinalizing] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
+  const [mergeNote, setMergeNote] = useState('');
+  const [mergeTagsInput, setMergeTagsInput] = useState('');
+  const [mergeStatus, setMergeStatus] = useState<RevisionStatus | ''>('');
   const [mergedContent, setMergedContent] = useState('');
   const [autoMergedContent, setAutoMergedContent] = useState('');
   const [mergedDirty, setMergedDirty] = useState(false);
@@ -31,8 +40,18 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
   const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
   const pendingSaveRef = useRef<{ filename: string; content: string } | null>(null);
 
-  const { content: contentA, revisions: revisionsA, isLoading: loadingA } = useFileContent(selectedA);
-  const { content: contentB, revisions: revisionsB, isLoading: loadingB } = useFileContent(selectedB);
+  const {
+    content: contentA,
+    revisions: revisionsA,
+    isLoading: loadingA,
+    saveContent: saveA,
+  } = useFileContent(selectedA);
+  const {
+    content: contentB,
+    revisions: revisionsB,
+    isLoading: loadingB,
+    saveContent: saveB,
+  } = useFileContent(selectedB);
 
   const bothSelected = selectedA && selectedB;
   const isLoading = loadingA || loadingB;
@@ -51,9 +70,24 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
 
   const effectiveContentA = selectedRevisionA?.content ?? contentA;
   const effectiveContentB = selectedRevisionB?.content ?? contentB;
+  const parsedMergeTags = useMemo(
+    () => mergeTagsInput.split(',').map((tag) => tag.trim()).filter(Boolean),
+    [mergeTagsInput],
+  );
 
   const headerA = selectedRevisionA?.note ? `${selectedA} - ${selectedRevisionA.note}` : selectedA ?? '';
   const headerB = selectedRevisionB?.note ? `${selectedB} - ${selectedRevisionB.note}` : selectedB ?? '';
+  const targetFilename = destination === 'overwrite-a'
+    ? selectedA
+    : destination === 'overwrite-b'
+      ? selectedB
+      : (newFilePath.trim() || null);
+  const isFinalizeDisabled = !bothSelected
+    || isLoading
+    || isFinalizing
+    || !targetFilename
+    || (destination === 'overwrite-a' && !selectedA)
+    || (destination === 'overwrite-b' && !selectedB);
 
   useEffect(() => {
     setMergedDirty(false);
@@ -61,10 +95,6 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
     setAutoMergedContent('');
     setUnresolvedHunks(0);
   }, [selectedA, selectedB, revisionA, revisionB]);
-
-  useEffect(() => {
-    setTargetFilename(selectedA ?? '');
-  }, [selectedA]);
 
   useEffect(() => {
     if (!mergedDirty) {
@@ -113,7 +143,7 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
   }, [createFile, files, selectedA, selectedB]);
 
   const handleFinalize = useCallback(async () => {
-    if (!targetFilename.trim()) {
+    if (!targetFilename || !targetFilename.trim()) {
       setErrorMessage('Choose a target file before finalizing.');
       return;
     }
@@ -199,11 +229,67 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
           </select>
         </div>
 
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold text-gray-400 shrink-0">Destination</span>
+          <select
+            value={destination}
+            onChange={(e) => {
+              setDestination(e.target.value as 'overwrite-a' | 'overwrite-b' | 'new-path');
+              setSaveError(null);
+              setSaveSuccess(null);
+            }}
+            className={`${selectClass} max-w-64`}
+          >
+            <option value="overwrite-a">Overwrite file A</option>
+            <option value="overwrite-b">Overwrite file B</option>
+            <option value="new-path">Save as new file path</option>
+          </select>
+
+          {destination === 'new-path' && (
+            <input
+              className={`${selectClass} min-w-64`}
+              value={newFilePath}
+              onChange={(e) => setNewFilePath(e.target.value)}
+              placeholder="docs/merged-result.md"
+            />
+          )}
+        </div>
+
+        <div className="grid gap-2 sm:grid-cols-3">
+          <input
+            className={selectClass}
+            value={mergeNote}
+            onChange={(e) => setMergeNote(e.target.value)}
+            placeholder="Revision note (optional)"
+          />
+          <input
+            className={selectClass}
+            value={mergeTagsInput}
+            onChange={(e) => setMergeTagsInput(e.target.value)}
+            placeholder="Tags (optional, comma-separated)"
+          />
+          <select
+            className={selectClass}
+            value={mergeStatus}
+            onChange={(e) => setMergeStatus((e.target.value as RevisionStatus) || '')}
+          >
+            <option value="">No status</option>
+            <option value="accepted">Accepted</option>
+            <option value="rejected">Rejected</option>
+            <option value="needs-review">Needs review</option>
+          </select>
+        </div>
+
+        {(saveSuccess || saveError) && (
+          <div className={`text-xs ${saveError ? 'text-red-400' : 'text-green-400'}`}>
+            {saveError ?? saveSuccess}
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-gray-700">
           <label className="text-xs text-gray-300 shrink-0">Merge target</label>
           <input
-            value={targetFilename}
-            onChange={(e) => setTargetFilename(e.target.value)}
+            value={targetFilename ?? ''}
+            onChange={(e) => setNewFilePath(e.target.value)}
             placeholder="merged-result.md"
             className="flex-1 min-w-56 text-xs bg-gray-800 text-gray-200 border border-gray-600 rounded px-2 py-1 focus:outline-none focus:border-blue-500"
           />
@@ -230,7 +316,18 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
           Loading...
         </div>
       ) : (
-        <div className="flex-1 flex overflow-hidden">
+        <>
+          <DiffView
+            contentA={effectiveContentA}
+            contentB={effectiveContentB}
+            filenameA={headerA}
+            filenameB={headerB}
+            actionLabel={isFinalizing ? 'Finalizing...' : 'Finalize merge'}
+            actionHint="Save merge result to the selected destination"
+            actionDisabled={isFinalizeDisabled}
+            onAction={handleFinalize}
+          />
+          <div className="flex-1 flex overflow-hidden">
           <div className="flex-1 min-w-0 overflow-hidden">
             <DiffView
               contentA={effectiveContentA}
@@ -257,6 +354,7 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
             />
           </div>
         </div>
+        </>
       )}
 
       {showOverwriteConfirm && (

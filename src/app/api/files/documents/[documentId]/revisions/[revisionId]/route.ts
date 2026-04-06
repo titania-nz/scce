@@ -1,3 +1,5 @@
+'use server';
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getRevision, mutateRevisionCollaboration } from '@/lib/fileStorage';
 

@@ -13,7 +13,7 @@ const BLOCK_WINDOW_MS = 5 * 60 * 1000;
 
 const attemptsByIp = new Map<string, AuthAttemptState>();
 
-function nowMs(): number {
+function now(): number {
   return Date.now();
 }
 

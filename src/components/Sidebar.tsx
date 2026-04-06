@@ -2,8 +2,13 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFiles } from '@/hooks/useFiles';
-import { FileContentResponse, FileEntry } from '@/types';
+import type { FileContentResponse, FileEntry } from '@/types';
 import { buildFileApiPath } from '@/lib/fileApiPath';
+import {
+  DEFAULT_REVISION_META,
+  parseMetaFromContent,
+} from '@/lib/revisionMeta';
+import type { RevisionMetaSummary } from '@/lib/revisionMeta';
 
 interface SidebarProps {
   selectedFile: string | null;
@@ -11,6 +16,7 @@ interface SidebarProps {
   onFileDeleted: (filename: string) => void;
   onFileRenamed: (oldName: string, newName: string) => void;
   onJumpToHeading: (heading: string) => void;
+  applyFilter: (filter: { chapterSearch: string; metaSearch: string; dateFrom: string; dateTo: string }) => void;
 }
 
 type RevisionMeta = RevisionMetaSummary;
@@ -67,12 +73,32 @@ interface SearchResult {
   snippet: string;
 }
 
-const DEFAULT_META: RevisionMeta = {
-  tags: [],
-  note: '',
-  status: '',
-};
+interface SavedFilter {
+  id: string;
+  name: string;
+  chapterSearch: string;
+  metaSearch: string;
+  dateFrom: string;
+  dateTo: string;
+}
+
+const DEFAULT_META: RevisionMeta = DEFAULT_REVISION_META;
 const SAVED_FILTERS_STORAGE_KEY = 'scce.savedSidebarFilters';
+
+// Helper function: keeps a small, testable transformation isolated from UI side effects.
+function getCurrentWeekRange(): { from: string; to: string } {
+  const now = new Date();
+  const startOfWeek = new Date(now);
+  startOfWeek.setDate(now.getDate() - now.getDay());
+  startOfWeek.setHours(0, 0, 0, 0);
+  const endOfWeek = new Date(startOfWeek);
+  endOfWeek.setDate(startOfWeek.getDate() + 6);
+  endOfWeek.setHours(23, 59, 59, 999);
+  return {
+    from: startOfWeek.toISOString().slice(0, 10),
+    to: endOfWeek.toISOString().slice(0, 10),
+  };
+}
 
 // Helper function: keeps a small, testable transformation isolated from UI side effects.
 function formatDate(value: string | undefined): string {
@@ -218,6 +244,24 @@ function renderHighlightedText(source: string, query: string) {
   );
 }
 
+function getCurrentWeekRange(): { from: string; to: string } {
+  const now = new Date();
+  const day = now.getDay();
+  const diffToMonday = (day + 6) % 7;
+  const start = new Date(now);
+  start.setDate(now.getDate() - diffToMonday);
+  start.setHours(0, 0, 0, 0);
+
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  end.setHours(23, 59, 59, 999);
+
+  return {
+    from: start.toISOString().slice(0, 10),
+    to: end.toISOString().slice(0, 10),
+  };
+}
+
 // Main component export: this is the entry point rendered by parent routes/components.
 export default function Sidebar({
   selectedFile,
@@ -225,6 +269,7 @@ export default function Sidebar({
   onFileDeleted,
   onFileRenamed,
   onJumpToHeading,
+  applyFilter,
 }: SidebarProps) {
   const { files, isLoading, createFile, deleteFile, deleteFiles, renameFile } = useFiles();
   const [newFileName, setNewFileName] = useState('');
@@ -237,6 +282,7 @@ export default function Sidebar({
   const [metaSearch, setMetaSearch] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [savedFilters, setSavedFilters] = useState<SavedFilter[]>([]);
   const [collapsedDocuments, setCollapsedDocuments] = useState<Record<string, boolean>>({});
   const [collapsedChapters, setCollapsedChapters] = useState<Record<string, boolean>>({});
   const [revisionMetaByFile, setRevisionMetaByFile] = useState<Record<string, RevisionMeta>>({});
@@ -250,7 +296,77 @@ export default function Sidebar({
   const [selectedHeading, setSelectedHeading] = useState('');
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [savedFilters, setSavedFilters] = useState<Array<{ id: string; name: string; filter: any }>>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const renamingInFlightRef = useRef(false);
+
+  function getCurrentWeekRange() {
+    const now = new Date();
+    const startOfWeek = new Date(now);
+    startOfWeek.setDate(now.getDate() - now.getDay());
+    startOfWeek.setHours(0, 0, 0, 0);
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(startOfWeek.getDate() + 6);
+    endOfWeek.setHours(23, 59, 59, 999);
+    return {
+      from: startOfWeek.toISOString().split('T')[0],
+      to: endOfWeek.toISOString().split('T')[0],
+    };
+  }
+
+  function saveCurrentFilter() {
+    // TODO: implement saving current filter
+  }
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(SAVED_FILTERS_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as SavedFilter[];
+      if (!Array.isArray(parsed)) return;
+      setSavedFilters(
+        parsed.filter((item) =>
+          item &&
+          typeof item.id === 'string' &&
+          typeof item.name === 'string' &&
+          typeof item.chapterSearch === 'string' &&
+          typeof item.metaSearch === 'string' &&
+          typeof item.dateFrom === 'string' &&
+          typeof item.dateTo === 'string'),
+      );
+    } catch {
+      // noop
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(SAVED_FILTERS_STORAGE_KEY, JSON.stringify(savedFilters));
+  }, [savedFilters]);
+
+  function applyFilter(filter: Pick<SavedFilter, 'chapterSearch' | 'metaSearch' | 'dateFrom' | 'dateTo'>) {
+    setChapterSearch(filter.chapterSearch);
+    setMetaSearch(filter.metaSearch);
+    setDateFrom(filter.dateFrom);
+    setDateTo(filter.dateTo);
+  }
+
+  function saveCurrentFilter() {
+    const name = window.prompt('Name this filter');
+    if (!name) return;
+    const trimmedName = name.trim();
+    if (!trimmedName) return;
+
+    const nextFilter: SavedFilter = {
+      id: crypto.randomUUID(),
+      name: trimmedName,
+      chapterSearch,
+      metaSearch,
+      dateFrom,
+      dateTo,
+    };
+
+    setSavedFilters((prev) => [...prev, nextFilter]);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -618,6 +734,7 @@ export default function Sidebar({
   }
 
   async function handleRename(oldName: string) {
+    if (renamingInFlightRef.current) return;
     let newName = renameValue.trim();
     if (!newName) {
       setRenamingFile(null);
@@ -628,6 +745,7 @@ export default function Sidebar({
       setRenamingFile(null);
       return;
     }
+    renamingInFlightRef.current = true;
     setError(null);
     try {
       await renameFile(oldName, newName);
@@ -636,6 +754,8 @@ export default function Sidebar({
     } catch (err: unknown) {
       const e = err as { message?: string };
       setError(e.message ?? 'Could not rename file');
+    } finally {
+      renamingInFlightRef.current = false;
     }
   }
 
@@ -753,7 +873,7 @@ export default function Sidebar({
               <div key={filter.id} className="inline-flex items-center rounded border border-gray-600 overflow-hidden">
                 <button
                   type="button"
-                  onClick={() => applyFilter(filter)}
+                  onClick={() => applyFilter(filter.filter)}
                   className="text-[11px] px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-100"
                 >
                   {filter.name}
