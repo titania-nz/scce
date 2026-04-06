@@ -35,6 +35,7 @@ function getRevisionBlobKey(filename: string): string {
   return `${filename}.revisions.json`;
 }
 
+// Helper function: keeps a small, testable transformation isolated from UI side effects.
 function normalizeRevision(revision: Revision): Revision {
   return {
     ...revision,
@@ -44,6 +45,7 @@ function normalizeRevision(revision: Revision): Revision {
   };
 }
 
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function readRevisions(filename: string): Promise<Revision[]> {
   if (isNetlifyRuntime) {
     const store = getBlobStore();
@@ -74,6 +76,7 @@ export async function readRevisions(filename: string): Promise<Revision[]> {
   }
 }
 
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function writeRevisions(filename: string, revisions: Revision[]): Promise<void> {
   const normalized = revisions.map(normalizeRevision);
 
@@ -90,6 +93,7 @@ export async function writeRevisions(filename: string, revisions: Revision[]): P
   fs.renameSync(tmpPath, revisionPath);
 }
 
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function deleteRevisions(filename: string): Promise<void> {
   if (isNetlifyRuntime) {
     const store = getBlobStore();
@@ -108,6 +112,7 @@ export async function deleteRevisions(filename: string): Promise<void> {
   }
 }
 
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function renameRevisions(oldName: string, newName: string): Promise<void> {
   const revisions = await readRevisions(oldName);
   if (!revisions.length) {

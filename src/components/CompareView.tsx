@@ -10,6 +10,7 @@ interface CompareViewProps {
   onFileSelect?: (filename: string | null) => void;
 }
 
+// Main component export: this is the entry point rendered by parent routes/components.
 export default function CompareView({ selectedFile = null, onFileSelect }: CompareViewProps) {
   const { files } = useFiles();
   const [selectedA, setSelectedA] = useState<string | null>(selectedFile);

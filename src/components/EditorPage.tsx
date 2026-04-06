@@ -19,6 +19,7 @@ const STATUS_OPTIONS: Array<{ value: RevisionStatus; label: string }> = [
   { value: 'needs-review', label: 'Needs review' },
 ];
 
+// Main component export: this is the entry point rendered by parent routes/components.
 export default function EditorPage() {
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [content, setContent] = useState('');

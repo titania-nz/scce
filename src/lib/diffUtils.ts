@@ -23,6 +23,7 @@ export interface ComputedDiff {
 
 const CONTEXT = 3;
 
+// Public hook/helper: called from UI code to encapsulate shared stateful behavior.
 export function computeDiff(a: string, b: string): ComputedDiff {
   const changes = diffLines(a, b);
 

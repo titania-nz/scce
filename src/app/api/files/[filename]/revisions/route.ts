@@ -3,6 +3,7 @@ import { listRevisions } from '@/lib/fileStorage';
 
 type Params = { params: Promise<{ filename: string }> };
 
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function GET(_request: Request, { params }: Params) {
   const { filename } = await params;
   try {

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 const PUBLIC_PATHS = ['/login', '/api/auth'];
 
+// Public hook/helper: called from UI code to encapsulate shared stateful behavior.
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
