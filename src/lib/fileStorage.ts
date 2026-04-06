@@ -6,19 +6,20 @@ import { FileEntry } from '@/types';
 const VALID_FILENAME = /^[a-zA-Z0-9_\-. ]+\.md$/;
 const MAX_FILENAME_LENGTH = 255;
 
-const isNetlify = process.env.NETLIFY === 'true';
-
-let blobStore: ReturnType<typeof getStore> | null = null;
+const isNetlifyRuntime =
+  process.env.NETLIFY === 'true' ||
+  process.env.CONTEXT !== undefined ||
+  process.env.NETLIFY_BLOBS_CONTEXT !== undefined;
 
 function getBlobStore() {
-  if (!blobStore && isNetlify) {
-    blobStore = getStore('files');
+  if (!isNetlifyRuntime) {
+    return null;
   }
-  return blobStore;
+  return getStore('files');
 }
 
 export function getNotesDir(): string {
-  if (isNetlify) {
+  if (isNetlifyRuntime) {
     return ''; // Not used
   }
   const dir = process.env.NOTES_DIR ?? path.join(process.cwd(), 'notes');
@@ -33,7 +34,7 @@ export function resolveSafePath(filename: string): string {
   if (!VALID_FILENAME.test(filename)) {
     throw Object.assign(new Error('Invalid filename'), { status: 400 });
   }
-  if (isNetlify) {
+  if (isNetlifyRuntime) {
     return filename; // Just return the filename for blob store
   }
   const notesDir = getNotesDir();
@@ -45,7 +46,7 @@ export function resolveSafePath(filename: string): string {
 }
 
 export async function listFiles(): Promise<FileEntry[]> {
-  if (isNetlify) {
+  if (isNetlifyRuntime) {
     const store = getBlobStore();
     if (!store) return [];
     const { blobs } = await store.list();
@@ -71,7 +72,7 @@ export async function listFiles(): Promise<FileEntry[]> {
 
 export async function readFile(filename: string): Promise<string> {
   const key = resolveSafePath(filename);
-  if (isNetlify) {
+  if (isNetlifyRuntime) {
     const store = getBlobStore();
     if (!store) throw Object.assign(new Error('File not found'), { status: 404 });
     try {
@@ -90,7 +91,7 @@ export async function readFile(filename: string): Promise<string> {
 
 export async function writeFile(filename: string, content: string): Promise<void> {
   const key = resolveSafePath(filename);
-  if (isNetlify) {
+  if (isNetlifyRuntime) {
     const store = getBlobStore();
     if (!store) throw new Error('Could not create file');
     await store.set(key, content);
@@ -104,7 +105,7 @@ export async function writeFile(filename: string, content: string): Promise<void
 
 export async function deleteFile(filename: string): Promise<void> {
   const key = resolveSafePath(filename);
-  if (isNetlify) {
+  if (isNetlifyRuntime) {
     const store = getBlobStore();
     if (!store) throw Object.assign(new Error('File not found'), { status: 404 });
     try {
@@ -124,7 +125,7 @@ export async function deleteFile(filename: string): Promise<void> {
 export async function renameFile(oldName: string, newName: string): Promise<void> {
   const oldKey = resolveSafePath(oldName);
   const newKey = resolveSafePath(newName);
-  if (isNetlify) {
+  if (isNetlifyRuntime) {
     const store = getBlobStore();
     if (!store) throw Object.assign(new Error('File not found'), { status: 404 });
     try {
@@ -151,7 +152,7 @@ export async function renameFile(oldName: string, newName: string): Promise<void
 export async function fileExists(filename: string): Promise<boolean> {
   try {
     const key = resolveSafePath(filename);
-    if (isNetlify) {
+    if (isNetlifyRuntime) {
       const store = getBlobStore();
       if (!store) return false;
       try {
