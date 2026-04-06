@@ -10,10 +10,10 @@ import DocumentDashboard from './DocumentDashboard';
 import { useFileContent } from '@/hooks/useFileContent';
 import { useAutoSave } from '@/hooks/useAutoSave';
 import { useDocuments } from '@/hooks/useDocuments';
-import type { PublishHistoryEntry, PublishTargetProfile, Revision, RevisionInlineNote } from '@/types';
+import type { ExportFormat, PublishHistoryEntry, PublishTargetProfile, Revision, RevisionInlineNote } from '@/types';
 import { RevisionStatus } from '@/types';
 import { useFiles } from '@/hooks/useFiles';
-import { buildFileApiPath } from '@/lib/fileApiPath';
+import { buildFileApiPath, buildFilePublishApiPath } from '@/lib/fileApiPath';
 
 // CodeMirror accesses browser APIs — must be dynamically imported with ssr:false
 const EditorPane = dynamic(() => import('./EditorPane'), { ssr: false });
@@ -259,6 +259,16 @@ export default function EditorPage() {
     if (requiredFields.tags && parsedTags.length === 0) missing.push('At least one tag');
     return missing;
   }, [parsedTags.length, requiredFields.note, requiredFields.status, requiredFields.tags, revisionNote, status]);
+  const revisionSummaries = useMemo<Record<string, RevisionSummary>>(
+    () =>
+      Object.fromEntries(
+        revisions.map((revision, index) => [
+          revision.id,
+          computeRevisionSummary(index > 0 ? revisions[index - 1] : undefined, revision),
+        ]),
+      ),
+    [revisions],
+  );
 
   useEffect(() => {
     const rawPipeline = window.localStorage.getItem(PIPELINE_STORAGE_KEY);
@@ -890,6 +900,66 @@ export default function EditorPage() {
   }
 
   const lastCheckpointAt = selectedFile ? lastCheckpointAtByFile[selectedFile] ?? null : null;
+
+  const toggleRevisionSelection = useCallback((revisionId: string) => {
+    setSelectedRevisionIds((prev) =>
+      prev.includes(revisionId) ? prev.filter((id) => id !== revisionId) : [...prev, revisionId],
+    );
+  }, []);
+
+  const handleExport = useCallback(async (format: ExportFormat) => {
+    if (!selectedFile) {
+      setOpsError('Select a file before exporting.');
+      return;
+    }
+
+    try {
+      setOpsError(null);
+      const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      const extension = format === 'docx' ? 'docx' : format;
+      anchor.href = url;
+      anchor.download = selectedFile.replace(/\.md$/i, `.${extension}`);
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setOpsError(error instanceof Error ? error.message : 'Could not export file.');
+    }
+  }, [content, selectedFile]);
+
+  const handlePublish = useCallback(async () => {
+    if (!selectedFile) {
+      setPublishMessage('Select a file before publishing.');
+      return;
+    }
+
+    setIsPublishing(true);
+    setPublishMessage('');
+    try {
+      const response = await fetch(buildFilePublishApiPath(selectedFile), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profileId: publishProfileId }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        history?: PublishHistoryEntry[];
+        latestRevisionStatus?: RevisionStatus;
+        published?: { outcome?: string };
+      };
+      if (!response.ok) {
+        throw new Error(payload.error ?? 'Could not publish file.');
+      }
+      setPublishHistory(payload.history ?? []);
+      setLatestRevisionStatus(payload.latestRevisionStatus ?? latestRevisionStatus);
+      setPublishMessage(payload.published?.outcome ?? 'Publish queued successfully.');
+    } catch (error) {
+      setPublishMessage(error instanceof Error ? error.message : 'Could not publish file.');
+    } finally {
+      setIsPublishing(false);
+    }
+  }, [latestRevisionStatus, publishProfileId, selectedFile]);
   const normalizedQuery = commandQuery.trim().toLowerCase();
   const openPrefix = normalizedQuery.startsWith('open ');
   const openTerm = openPrefix ? normalizedQuery.slice(5).trim() : '';
@@ -1069,7 +1139,6 @@ export default function EditorPage() {
           <CompareView
             selectedFile={selectedFile}
             onFileSelect={setSelectedFile}
-            onDirtyChange={setCompareHasUnsavedChanges}
           />
         ) : !selectedFile ? (
           <div className="flex-1 flex flex-col items-center justify-center text-gray-500 gap-3">

@@ -47,6 +47,32 @@ interface DocumentGroup {
   chapters: ChapterGroup[];
 }
 
+interface HeadingItem {
+  level: number;
+  text: string;
+}
+
+interface SearchEntry {
+  id: string;
+  sourceType: 'current' | 'revision';
+  file: FileEntry;
+  document: string;
+  chapter: string;
+  revisionLabel: string;
+  createdAt: Date;
+  createdAtIso: string;
+  tags: string[];
+  status: string;
+  note: string;
+  content: string;
+}
+
+interface SearchResult {
+  entry: SearchEntry;
+  score: number;
+  snippet: string;
+}
+
 interface ImportCandidate {
   originalPath: string;
   name: string;
@@ -340,7 +366,7 @@ export default function Sidebar({
   onFileDeleted,
   onFileRenamed,
   onJumpToHeading,
-  applyFilter,
+  applyFilter: applyExternalFilter,
 }: SidebarProps) {
   const { files, isLoading, createFile, deleteFile, deleteFiles, renameFile } = useFiles();
   const [newFileName, setNewFileName] = useState('');
@@ -370,6 +396,7 @@ export default function Sidebar({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const zipInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+  const renamingInFlightRef = useRef(false);
   const [importWizard, setImportWizard] = useState<ImportWizardState | null>(null);
   const [importTemplate, setImportTemplate] = useState('chapter-{n}-r{rev}.md');
   const [wizardLoading, setWizardLoading] = useState(false);
@@ -404,6 +431,7 @@ export default function Sidebar({
     setMetaSearch(filter.metaSearch);
     setDateFrom(filter.dateFrom);
     setDateTo(filter.dateTo);
+    applyExternalFilter(filter);
   }
 
   function saveCurrentFilter() {
@@ -1105,7 +1133,7 @@ export default function Sidebar({
               <div key={filter.id} className="inline-flex items-center rounded border border-gray-600 overflow-hidden">
                 <button
                   type="button"
-                  onClick={() => applyFilter(filter.filter)}
+                  onClick={() => applyFilter(filter)}
                   className="text-[11px] px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-100"
                 >
                   {filter.name}
