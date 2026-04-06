@@ -5,11 +5,16 @@ interface ToolbarProps {
   isDirty: boolean;
   isSaving: boolean;
   lastCheckpointAt: string | null;
+  isOffline: boolean;
+  queuedSyncCount: number;
   mobileView: 'edit' | 'preview';
   compareMode: boolean;
   onMobileViewChange: (view: 'edit' | 'preview') => void;
   onSaveCheckpoint: () => void;
   onContinueWorkingDraft: () => void;
+  onOpenRecoveryPanel: () => void;
+  onOpenStorageHealth: () => void;
+  onExportBackup: () => void;
   onToggleSidebar: () => void;
   onToggleCompare: () => void;
 }
@@ -29,11 +34,16 @@ export default function Toolbar({
   isDirty,
   isSaving,
   lastCheckpointAt,
+  isOffline,
+  queuedSyncCount,
   mobileView,
   compareMode,
   onMobileViewChange,
   onSaveCheckpoint,
   onContinueWorkingDraft,
+  onOpenRecoveryPanel,
+  onOpenStorageHealth,
+  onExportBackup,
   onToggleSidebar,
   onToggleCompare,
 }: ToolbarProps) {
@@ -69,6 +79,32 @@ export default function Toolbar({
           <span className="ml-2 text-xs text-gray-400">Saving draft...</span>
         )}
       </span>
+
+      <span className={`text-[11px] px-2 py-1 rounded border shrink-0 ${isOffline ? 'border-amber-500/70 text-amber-300 bg-amber-950/40' : 'border-emerald-500/50 text-emerald-300 bg-emerald-950/30'}`}>
+        {isOffline ? 'Offline' : 'Online'}
+        {queuedSyncCount > 0 ? ` • ${queuedSyncCount} queued` : ''}
+      </span>
+
+      <button
+        onClick={onOpenRecoveryPanel}
+        className="hidden lg:inline-flex px-2.5 py-1 text-xs rounded bg-gray-700 text-gray-200 hover:bg-gray-600 shrink-0"
+      >
+        Restore drafts
+      </button>
+
+      <button
+        onClick={onOpenStorageHealth}
+        className="hidden lg:inline-flex px-2.5 py-1 text-xs rounded bg-gray-700 text-gray-200 hover:bg-gray-600 shrink-0"
+      >
+        Storage health
+      </button>
+
+      <button
+        onClick={onExportBackup}
+        className="hidden lg:inline-flex px-2.5 py-1 text-xs rounded bg-gray-700 text-gray-200 hover:bg-gray-600 shrink-0"
+      >
+        Export backup
+      </button>
 
       {/* Compare toggle */}
       <button
