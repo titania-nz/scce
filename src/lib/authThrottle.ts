@@ -37,15 +37,15 @@ export function getAuthThrottleStatus(request: Request): AuthThrottleStatus {
     return { allowed: true, retryAfterSeconds: 0 };
   }
 
-  const now = nowMs();
-  if (state.blockedUntil <= now) {
+  const currentTime = now();
+  if (state.blockedUntil <= currentTime) {
     attemptsByIp.delete(ip);
     return { allowed: true, retryAfterSeconds: 0 };
   }
 
   return {
     allowed: false,
-    retryAfterSeconds: Math.ceil((state.blockedUntil - now) / 1000),
+    retryAfterSeconds: Math.ceil((state.blockedUntil - currentTime) / 1000),
   };
 }
 
@@ -59,7 +59,7 @@ export function recordAuthFailure(request: Request): void {
 
   attemptsByIp.set(ip, {
     failedAttempts: shouldBlock ? 0 : failedAttempts,
-    blockedUntil: shouldBlock ? nowMs() + BLOCK_WINDOW_MS : 0,
+    blockedUntil: shouldBlock ? now() + BLOCK_WINDOW_MS : 0,
   });
 }
 
