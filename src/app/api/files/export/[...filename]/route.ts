@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { readFile } from '@/lib/fileStorage';
+import { readNoteFile } from '@/lib/noteContentStorage';
 import { parseFilename } from '@/lib/parseFilename';
 import { ExportFormat } from '@/types';
 import {
@@ -27,7 +27,7 @@ export async function GET(request: NextRequest, { params }: Params) {
   try {
     const filename = parseFilename(rawFilename);
     const format = parseFormat(request.nextUrl.searchParams.get('format'));
-    const content = await readFile(filename);
+    const content = await readNoteFile(filename);
 
     const title = filename.replace(/\.md$/i, '');
     const basename = filename.replace(/\.md$/i, '');

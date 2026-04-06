@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { writeFile } from '@/lib/fileStorage';
+import { writeNoteFile } from '@/lib/noteContentStorage';
 import { readRevisions } from '@/lib/revisionStorage';
 import { parseFilename } from '@/lib/parseFilename';
 
@@ -22,7 +22,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     if (!revision) {
       return NextResponse.json({ error: 'Revision not found' }, { status: 404 });
     }
-    await writeFile(filename, revision.content);
+    await writeNoteFile(filename, revision.content);
     return NextResponse.json({ name: filename, currentDraftRevisionId: revisionId });
   } catch (err: unknown) {
     const e = err as { status?: number; message?: string };

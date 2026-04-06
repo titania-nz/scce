@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { parseFilename } from '@/lib/parseFilename';
-import { readFile, writeFile } from '@/lib/fileStorage';
+import { readNoteFile, writeNoteFile } from '@/lib/noteContentStorage';
 import { readRevisions, writeRevisions } from '@/lib/revisionStorage';
 import { readPublishHistory, writePublishHistory } from '@/lib/publishStorage';
 import { PublishHistoryEntry, PublishTargetProfile, Revision } from '@/types';
@@ -104,7 +104,7 @@ export async function POST(request: NextRequest, { params }: Params) {
         return NextResponse.json({ error: 'Publish history entry not found' }, { status: 404 });
       }
 
-      await writeFile(filename, target.contentSnapshot);
+      await writeNoteFile(filename, target.contentSnapshot);
       const rollbackRevision: Revision = {
         id: crypto.randomUUID(),
         createdAt: new Date().toISOString(),
@@ -144,7 +144,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     }
 
     const profile = findProfile(body.profileId);
-    const snapshot = await readFile(filename);
+    const snapshot = await readNoteFile(filename);
 
     const entry: PublishHistoryEntry = {
       id: crypto.randomUUID(),

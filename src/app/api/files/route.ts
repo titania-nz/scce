@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { fileExists, listFiles, readFile, writeFile } from '@/lib/fileStorage';
+import { listFiles } from '@/lib/fileStorage';
+import { noteFileExists, readNoteFile, writeNoteFile } from '@/lib/noteContentStorage';
 import { readRevisions } from '@/lib/revisionStorage';
 import { parseMetaFromContent, summarizeRevisionMeta } from '@/lib/revisionMeta';
 
@@ -21,7 +22,7 @@ export async function GET(request: NextRequest) {
             return { ...file, ...revisionMeta };
           }
 
-          const content = await readFile(file.name);
+          const content = await readNoteFile(file.name);
           return { ...file, ...parseMetaFromContent(content) };
         } catch {
           return { ...file, note: '', status: '', tags: [] };
@@ -49,11 +50,11 @@ export async function POST(request: NextRequest) {
     if (typeof content !== 'string') {
       return NextResponse.json({ error: 'Invalid content' }, { status: 400 });
     }
-    if (await fileExists(name)) {
+    if (await noteFileExists(name)) {
       return NextResponse.json({ error: 'File already exists' }, { status: 409 });
     }
 
-    await writeFile(name, content);
+    await writeNoteFile(name, content);
     return NextResponse.json({ name }, { status: 201 });
   } catch (err: unknown) {
     const e = err as { status?: number; message?: string };

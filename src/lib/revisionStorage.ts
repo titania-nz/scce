@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { getNotesDir, resolveSafePath } from '@/lib/fileStorage';
+import { getNotesDir, resolveSafePath } from '@/lib/notesPath';
 import { Revision } from '@/types';
 import { isNetlifyRuntime, getBlobStore } from '@/lib/netlifyRuntime';
 

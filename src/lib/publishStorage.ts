@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getBlobStore, isNetlifyRuntime } from '@/lib/netlifyRuntime';
-import { getNotesDir, resolveSafePath } from '@/lib/fileStorage';
+import { getNotesDir, resolveSafePath } from '@/lib/notesPath';
 import { PublishHistoryEntry } from '@/types';
 
 interface PublishMeta {
