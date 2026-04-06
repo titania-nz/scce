@@ -5,9 +5,11 @@ interface ToolbarProps {
   isDirty: boolean;
   isSaving: boolean;
   mobileView: 'edit' | 'preview';
+  compareMode: boolean;
   onMobileViewChange: (view: 'edit' | 'preview') => void;
   onSave: () => void;
   onToggleSidebar: () => void;
+  onToggleCompare: () => void;
 }
 
 export default function Toolbar({
@@ -15,9 +17,11 @@ export default function Toolbar({
   isDirty,
   isSaving,
   mobileView,
+  compareMode,
   onMobileViewChange,
   onSave,
   onToggleSidebar,
+  onToggleCompare,
 }: ToolbarProps) {
   return (
     <div className="flex items-center gap-2 px-3 h-12 bg-gray-800 border-b border-gray-700 shrink-0">
@@ -49,8 +53,24 @@ export default function Toolbar({
         )}
       </span>
 
+      {/* Compare toggle */}
+      <button
+        onClick={onToggleCompare}
+        title="Compare two files (A/B)"
+        className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded transition-colors shrink-0 ${
+          compareMode
+            ? 'bg-blue-600 text-white hover:bg-blue-500'
+            : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+        }`}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
+        </svg>
+        Compare
+      </button>
+
       {/* Mobile Edit/Preview tabs */}
-      <div className="md:hidden flex rounded overflow-hidden border border-gray-600">
+      <div className={`md:hidden flex rounded overflow-hidden border border-gray-600 ${compareMode ? 'hidden' : ''}`}>
         <button
           onClick={() => onMobileViewChange('edit')}
           className={`px-3 py-1 text-xs transition-colors ${
@@ -74,7 +94,7 @@ export default function Toolbar({
       </div>
 
       {/* Save button */}
-      {filename && (
+      {filename && !compareMode && (
         <button
           onClick={onSave}
           disabled={!isDirty || isSaving}
