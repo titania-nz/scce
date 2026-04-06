@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFiles } from '@/hooks/useFiles';
 import { FileContentResponse, FileEntry } from '@/types';
 import { buildFileApiPath } from '@/lib/fileApiPath';
+import { parseMetaFromContent } from '../lib/revisionMeta';
+import type { RevisionMetaSummary } from '../lib/revisionMeta';
 
 interface SidebarProps {
   selectedFile: string | null;
@@ -250,7 +252,44 @@ export default function Sidebar({
   const [selectedHeading, setSelectedHeading] = useState('');
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [savedFilters, setSavedFilters] = useState<Array<{ id: string; name: string; chapterSearch: string; metaSearch: string; dateFrom: string; dateTo: string }>>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const renamingInFlightRef = useRef(false);
+
+  const getCurrentWeekRange = () => {
+    const now = new Date();
+    const startOfWeek = new Date(now);
+    startOfWeek.setDate(now.getDate() - now.getDay()); // Sunday
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(startOfWeek.getDate() + 6); // Saturday
+    const from = startOfWeek.toISOString().split('T')[0];
+    const to = endOfWeek.toISOString().split('T')[0];
+    return { from, to };
+  };
+
+  const applyFilter = ({ chapterSearch: cs, metaSearch: ms, dateFrom: df, dateTo: dt }: {
+    chapterSearch: string;
+    metaSearch: string;
+    dateFrom: string;
+    dateTo: string;
+  }) => {
+    setChapterSearch(cs);
+    setMetaSearch(ms);
+    setDateFrom(df);
+    setDateTo(dt);
+  };
+
+  const saveCurrentFilter = () => {
+    const newFilter = {
+      id: Date.now().toString(),
+      name: `Filter ${savedFilters.length + 1}`,
+      chapterSearch,
+      metaSearch,
+      dateFrom,
+      dateTo,
+    };
+    setSavedFilters((prev) => [...prev, newFilter]);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -618,6 +657,7 @@ export default function Sidebar({
   }
 
   async function handleRename(oldName: string) {
+    if (renamingInFlightRef.current) return;
     let newName = renameValue.trim();
     if (!newName) {
       setRenamingFile(null);
@@ -628,6 +668,7 @@ export default function Sidebar({
       setRenamingFile(null);
       return;
     }
+    renamingInFlightRef.current = true;
     setError(null);
     try {
       await renameFile(oldName, newName);
@@ -636,6 +677,8 @@ export default function Sidebar({
     } catch (err: unknown) {
       const e = err as { message?: string };
       setError(e.message ?? 'Could not rename file');
+    } finally {
+      renamingInFlightRef.current = false;
     }
   }
 

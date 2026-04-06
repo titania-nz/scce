@@ -21,6 +21,11 @@ export interface ComputedDiff {
   isIdentical: boolean;
 }
 
+export interface PreparedDiff extends ComputedDiff {
+  mergeHunks: DiffHunk[];
+  stableMergedBContent: string;
+}
+
 const CONTEXT = 3;
 
 // Public hook/helper: called from UI code to encapsulate shared stateful behavior.
@@ -87,4 +92,23 @@ export function computeDiff(a: string, b: string): ComputedDiff {
   }));
 
   return { hunks, totalAdditions, totalRemovals, isIdentical };
+}
+
+// Public hook/helper: called from UI code to encapsulate shared stateful behavior.
+export function buildPreparedDiff(a: string, b: string): PreparedDiff {
+  const computed = computeDiff(a, b);
+
+  // Build the stable B-wins merged content: skip A-only lines, keep B and context.
+  const changes = diffLines(a, b);
+  let stableMergedBContent = '';
+  for (const change of changes) {
+    if (change.removed) continue;
+    stableMergedBContent += change.value;
+  }
+
+  return {
+    ...computed,
+    mergeHunks: computed.hunks,
+    stableMergedBContent,
+  };
 }
