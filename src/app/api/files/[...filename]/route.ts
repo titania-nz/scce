@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readFile, writeFile, deleteFile, renameFile } from '@/lib/fileStorage';
 import { deleteRevisions, readRevisions, renameRevisions, writeRevisions } from '@/lib/revisionStorage';
+import { deletePublishHistory, renamePublishHistory } from '@/lib/publishStorage';
 import { parseFilename } from '@/lib/parseFilename';
 import { Revision, RevisionStatus } from '@/types';
 
@@ -76,6 +77,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
       }
       await renameFile(filename, newName);
       await renameRevisions(filename, newName);
+      await renamePublishHistory(filename, newName);
       return NextResponse.json({ name: newName });
     } else if ('content' in body) {
       const { content } = body;
@@ -142,6 +144,7 @@ export async function DELETE(_request: NextRequest, { params }: Params) {
     const filename = parseFilename(rawFilename);
     await deleteFile(filename);
     await deleteRevisions(filename);
+    await deletePublishHistory(filename);
     return NextResponse.json({ success: true });
   } catch (err: unknown) {
     const e = err as { status?: number; message?: string };
