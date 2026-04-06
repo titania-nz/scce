@@ -102,6 +102,11 @@ export default function EditorPage() {
   const [workingDraftByFile, setWorkingDraftByFile] = useState<Record<string, string>>({});
   const [lastCheckpointAtByFile, setLastCheckpointAtByFile] = useState<Record<string, string>>({});
   const [jumpToHeadingToken, setJumpToHeadingToken] = useState('');
+  const [selectedRevisionIds, setSelectedRevisionIds] = useState<string[]>([]);
+  const [activeRevisionId, setActiveRevisionId] = useState<string | null>(null);
+  const [inlineNoteMessage, setInlineNoteMessage] = useState('');
+  const [inlineNoteLine, setInlineNoteLine] = useState('');
+  const [timelineError, setTimelineError] = useState<string | null>(null);
 
   const { content: loadedContent, revisions, isLoading, saveContent, updateRevisionInlineNotes } = useFileContent(selectedFile);
   const prevFileRef = useRef<string | null>(null);
