@@ -4,17 +4,22 @@ import {
   CollaborationState,
   CreateDocumentInput,
   CreateRevisionInput,
+  DocumentBranchName,
+  DocumentBranchState,
+  DocumentDashboardEntry,
+  DocumentMilestone,
   Document,
   DocumentRevision,
   FileEntry,
   RevisionAuditEvent,
   RevisionComment,
-  ReviewRequest,
-  RevisionEntry,
   RevisionLock,
   RevisionMention,
   RevisionNotification,
+  ReviewRequest,
   RevisionPresence,
+  RevisionEntry,
+  RevisionNote,
 } from '@/types';
 import { isNetlifyRuntime, getBlobStore } from '@/lib/netlifyRuntime';
 
@@ -24,6 +29,8 @@ const MAX_FILENAME_LENGTH = 255;
 const DOCUMENTS_DIRNAME = '.documents';
 const DOCUMENT_META_KEY = 'document.json';
 const REVISIONS_DIR = 'revisions';
+const DOCUMENT_BRANCHES_KEY = 'branches.json';
+const DOCUMENT_COMMENTS_DIR = 'comments';
 
 interface FileRevisionMeta {
   currentDraftRevisionId: string | null;
@@ -226,6 +233,14 @@ function documentRevisionBlobKey(documentId: string, revisionId: string): string
   return `documents/${documentId}/${REVISIONS_DIR}/${revisionId}.json`;
 }
 
+function documentBranchesBlobKey(documentId: string): string {
+  return `documents/${documentId}/${DOCUMENT_BRANCHES_KEY}`;
+}
+
+function documentCommentsBlobKey(documentId: string, revisionId: string): string {
+  return `documents/${documentId}/${DOCUMENT_COMMENTS_DIR}/${revisionId}.json`;
+}
+
 function getDocumentsDir(): string {
   const base = getNotesDir();
   const dir = path.join(base, DOCUMENTS_DIRNAME);
@@ -241,6 +256,16 @@ function getDocumentRevisionsDirPath(documentId: string): string {
   const dir = path.join(getDocumentsDir(), documentId, REVISIONS_DIR);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+function getDocumentBranchesPath(documentId: string): string {
+  return path.join(getDocumentsDir(), documentId, DOCUMENT_BRANCHES_KEY);
+}
+
+function getDocumentCommentsPath(documentId: string, revisionId: string): string {
+  const dir = path.join(getDocumentsDir(), documentId, DOCUMENT_COMMENTS_DIR);
+  fs.mkdirSync(dir, { recursive: true });
+  return path.join(dir, `${revisionId}.json`);
 }
 
 function validateDocumentId(documentId: string): void {
@@ -292,6 +317,15 @@ function createAuditEvent(
     targetId,
     createdAt: nowIso(),
     metadata,
+  };
+}
+
+function ensureBranchState(branches?: Partial<DocumentBranchState>): DocumentBranchState {
+  return {
+    draftRevisionId: branches?.draftRevisionId ?? null,
+    acceptedRevisionId: branches?.acceptedRevisionId ?? null,
+    canonicalRevisionId: branches?.canonicalRevisionId ?? null,
+    milestones: Array.isArray(branches?.milestones) ? branches.milestones : [],
   };
 }
 
@@ -437,6 +471,47 @@ export async function createDocumentRootRecord(input: CreateDocumentInput): Prom
   return document;
 }
 
+async function readDocumentBranchState(documentId: string): Promise<DocumentBranchState> {
+  validateDocumentId(documentId);
+  await readDocumentRootRecord(documentId);
+  if (isNetlifyRuntime) {
+    const store = getBlobStore();
+    if (!store) return ensureBranchState();
+    try {
+      const raw = await store.get(documentBranchesBlobKey(documentId));
+      if (!raw) return ensureBranchState();
+      const parsed = JSON.parse(new TextDecoder().decode(raw)) as Partial<DocumentBranchState>;
+      return ensureBranchState(parsed);
+    } catch {
+      return ensureBranchState();
+    }
+  }
+
+  const branchPath = getDocumentBranchesPath(documentId);
+  if (!fs.existsSync(branchPath)) return ensureBranchState();
+  try {
+    const parsed = JSON.parse(fs.readFileSync(branchPath, 'utf8')) as Partial<DocumentBranchState>;
+    return ensureBranchState(parsed);
+  } catch {
+    return ensureBranchState();
+  }
+}
+
+async function writeDocumentBranchState(documentId: string, branches: DocumentBranchState): Promise<void> {
+  validateDocumentId(documentId);
+  await readDocumentRootRecord(documentId);
+  const normalized = ensureBranchState(branches);
+  if (isNetlifyRuntime) {
+    const store = getBlobStore();
+    if (!store) throw new Error('Could not save branch state');
+    await store.set(documentBranchesBlobKey(documentId), JSON.stringify(normalized, null, 2));
+    return;
+  }
+  const branchPath = getDocumentBranchesPath(documentId);
+  fs.mkdirSync(path.dirname(branchPath), { recursive: true });
+  fs.writeFileSync(branchPath, JSON.stringify(normalized, null, 2), 'utf8');
+}
+
 // API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function appendImmutableRevision(
   documentId: string,
@@ -469,12 +544,20 @@ export async function appendImmutableRevision(
     const store = getBlobStore();
     if (!store) throw new Error('Could not append revision');
     await store.set(documentRevisionBlobKey(documentId, revision.id), JSON.stringify(revision, null, 2));
+    const branches = await readDocumentBranchState(documentId);
+    if (!branches.draftRevisionId) {
+      await writeDocumentBranchState(documentId, { ...branches, draftRevisionId: revision.id });
+    }
     return revision;
   }
 
   const revisionsDir = getDocumentRevisionsDirPath(documentId);
   const revisionPath = path.join(revisionsDir, `${revision.id}.json`);
   fs.writeFileSync(revisionPath, JSON.stringify(revision, null, 2), 'utf8');
+  const branches = await readDocumentBranchState(documentId);
+  if (!branches.draftRevisionId) {
+    await writeDocumentBranchState(documentId, { ...branches, draftRevisionId: revision.id });
+  }
   return revision;
 }
 
@@ -687,6 +770,160 @@ export async function getRevision(documentId: string, revisionId: string): Promi
   }
   const revision = JSON.parse(fs.readFileSync(revisionPath, 'utf8')) as DocumentRevision;
   return ensureRevision(revision);
+}
+
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
+export async function getDocumentBranchState(documentId: string): Promise<DocumentBranchState> {
+  const branches = await readDocumentBranchState(documentId);
+  const revisions = await listRevisionsByDocumentId(documentId);
+  const latestRevisionId = revisions.at(-1)?.id ?? null;
+  if (!branches.draftRevisionId && latestRevisionId) {
+    const next = { ...branches, draftRevisionId: latestRevisionId };
+    await writeDocumentBranchState(documentId, next);
+    return next;
+  }
+  return branches;
+}
+
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
+export async function updateDocumentBranchState(
+  documentId: string,
+  patch: Partial<DocumentBranchState>,
+): Promise<DocumentBranchState> {
+  const current = await getDocumentBranchState(documentId);
+  const next = ensureBranchState({
+    ...current,
+    ...patch,
+    milestones: patch.milestones ?? current.milestones,
+  });
+  await writeDocumentBranchState(documentId, next);
+  return next;
+}
+
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
+export async function promoteDocumentBranch(
+  documentId: string,
+  revisionId: string,
+  branch: DocumentBranchName,
+): Promise<DocumentBranchState> {
+  const revision = await getRevision(documentId, revisionId);
+  if (!revision) {
+    throw Object.assign(new Error('Revision not found'), { status: 404 });
+  }
+  const branches = await getDocumentBranchState(documentId);
+  const milestoneLabel =
+    branch === 'canonical'
+      ? 'Promoted to canonical version'
+      : branch === 'accepted'
+        ? 'Marked as accepted'
+        : 'Set as draft head';
+  const nextMilestones: DocumentMilestone[] = [
+    ...branches.milestones,
+    {
+      id: generateRevisionId(nowIso()),
+      revisionId,
+      label: milestoneLabel,
+      createdAt: nowIso(),
+    },
+  ];
+  return updateDocumentBranchState(documentId, {
+    ...branches,
+    draftRevisionId: branch === 'draft' ? revisionId : branches.draftRevisionId,
+    acceptedRevisionId: branch === 'accepted' ? revisionId : branches.acceptedRevisionId,
+    canonicalRevisionId: branch === 'canonical' ? revisionId : branches.canonicalRevisionId,
+    milestones: nextMilestones,
+  });
+}
+
+async function readRevisionDiscussion(documentId: string, revisionId: string): Promise<RevisionNote[]> {
+  await getRevision(documentId, revisionId);
+  if (isNetlifyRuntime) {
+    const store = getBlobStore();
+    if (!store) return [];
+    try {
+      const raw = await store.get(documentCommentsBlobKey(documentId, revisionId));
+      if (!raw) return [];
+      const parsed = JSON.parse(new TextDecoder().decode(raw)) as RevisionNote[];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  const commentPath = getDocumentCommentsPath(documentId, revisionId);
+  if (!fs.existsSync(commentPath)) return [];
+  try {
+    const parsed = JSON.parse(fs.readFileSync(commentPath, 'utf8')) as RevisionNote[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writeRevisionDiscussion(documentId: string, revisionId: string, comments: RevisionNote[]): Promise<void> {
+  if (isNetlifyRuntime) {
+    const store = getBlobStore();
+    if (!store) throw new Error('Could not save comment');
+    await store.set(documentCommentsBlobKey(documentId, revisionId), JSON.stringify(comments, null, 2));
+    return;
+  }
+  const commentPath = getDocumentCommentsPath(documentId, revisionId);
+  fs.writeFileSync(commentPath, JSON.stringify(comments, null, 2), 'utf8');
+}
+
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
+export async function listRevisionComments(documentId: string, revisionId: string): Promise<RevisionNote[]> {
+  const revision = await getRevision(documentId, revisionId);
+  const sidecar = await readRevisionDiscussion(documentId, revisionId);
+  return [...revision.notes, ...sidecar].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
+export async function addRevisionComment(
+  documentId: string,
+  revisionId: string,
+  input: { message: string; parentId?: string },
+): Promise<RevisionNote> {
+  const trimmed = input.message.trim();
+  if (!trimmed) {
+    throw Object.assign(new Error('Comment message is required'), { status: 400 });
+  }
+  const comments = await readRevisionDiscussion(documentId, revisionId);
+  const createdAt = nowIso();
+  const comment: RevisionNote = {
+    id: generateRevisionId(createdAt),
+    message: trimmed,
+    createdAt,
+    parentId: input.parentId,
+  };
+  await writeRevisionDiscussion(documentId, revisionId, [...comments, comment]);
+  return comment;
+}
+
+// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
+export async function listDocumentDashboardEntries(): Promise<DocumentDashboardEntry[]> {
+  const files = await listFiles();
+  await Promise.all(files.map((file) => migrateLegacyFileToInitialRevision(file.name)));
+  const documentIds = files.map((file) => legacyFilenameToDocumentId(file.name));
+
+  const entries = await Promise.all(
+    documentIds.map(async (documentId) => {
+      try {
+        const document = await readDocumentRootRecord(documentId);
+        const revisions = await listRevisionsByDocumentId(documentId);
+        const revisionsWithThreads = await Promise.all(
+          revisions.map(async (revision) => ({
+            ...revision,
+            notes: await listRevisionComments(documentId, revision.id),
+          })),
+        );
+        const branches = await getDocumentBranchState(documentId);
+        return { document, revisions: revisionsWithThreads, branches } satisfies DocumentDashboardEntry;
+      } catch {
+        return null;
+      }
+    }),
+  );
+  return entries.filter((entry): entry is DocumentDashboardEntry => Boolean(entry));
 }
 
 // API handler: validates input, calls storage helpers, and returns an HTTP JSON response.

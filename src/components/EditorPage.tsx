@@ -7,8 +7,12 @@ import PreviewPane from './PreviewPane';
 import Toolbar from './Toolbar';
 import CompareView from './CompareView';
 import DiffView from './DiffView';
+import DocumentDashboard from './DocumentDashboard';
 import { useFileContent } from '@/hooks/useFileContent';
 import { useAutoSave } from '@/hooks/useAutoSave';
+import { useDocuments } from '@/hooks/useDocuments';
+import type { Revision, RevisionInlineNote } from '@/types';
+import { RevisionStatus } from '@/types';
 import { useFiles } from '@/hooks/useFiles';
 import { buildFileExportApiPath, buildFilePublishApiPath, buildFileApiPath } from '@/lib/fileApiPath';
 import { PublishHistoryEntry, PublishTargetProfile, RevisionStatus, Revision, RevisionInlineNote } from '@/types';
@@ -89,7 +93,7 @@ export default function EditorPage() {
   const [mobileView, setMobileView] = useState<'edit' | 'preview'>('edit');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [compareMode, setCompareMode] = useState(false);
-  const [compareHasUnsavedChanges, setCompareHasUnsavedChanges] = useState(false);
+  const [documentMode, setDocumentMode] = useState(false);
   const [revisionNote, setRevisionNote] = useState('');
   const [tagsInput, setTagsInput] = useState('');
   const [status, setStatus] = useState<RevisionStatus | ''>('');
@@ -98,6 +102,11 @@ export default function EditorPage() {
   const [requiredFields, setRequiredFields] = useState(DEFAULT_REQUIRED_FIELDS);
   const [checkpointWarning, setCheckpointWarning] = useState<string | null>(null);
   const [knownTags, setKnownTags] = useState<string[]>([]);
+  const [selectedRevisionIds, setSelectedRevisionIds] = useState<string[]>([]);
+  const [activeRevisionId, setActiveRevisionId] = useState<string | null>(null);
+  const [inlineNoteMessage, setInlineNoteMessage] = useState('');
+  const [inlineNoteLine, setInlineNoteLine] = useState('');
+  const [timelineError, setTimelineError] = useState<string | null>(null);
   const { files } = useFiles();
   const [workingDraftByFile, setWorkingDraftByFile] = useState<Record<string, string>>({});
   const [lastCheckpointAtByFile, setLastCheckpointAtByFile] = useState<Record<string, string>>({});
@@ -116,6 +125,12 @@ export default function EditorPage() {
   const [fileFilter, setFileFilter] = useState({ chapterSearch: '', metaSearch: '', dateFrom: '', dateTo: '' });
 
   const { content: loadedContent, revisions, isLoading, saveContent, updateRevisionInlineNotes } = useFileContent(selectedFile);
+  const {
+    documents,
+    isLoading: isDocumentsLoading,
+    promoteRevision,
+    addComment,
+  } = useDocuments();
   const prevFileRef = useRef<string | null>(null);
 
   const parsedTags = useMemo(
@@ -504,89 +519,6 @@ export default function EditorPage() {
     }
   }
 
-  const handleCompareToggle = useCallback(() => {
-    if (compareMode && compareHasUnsavedChanges) {
-      const shouldLeave = window.confirm('You have unsaved merged edits. Leave compare mode anyway?');
-      if (!shouldLeave) return;
-    }
-    setCompareMode((mode) => !mode);
-    if (compareMode) {
-      setCompareHasUnsavedChanges(false);
-    }
-  }, [compareHasUnsavedChanges, compareMode]);
-
-  async function handleExport(format: 'html' | 'pdf' | 'docx') {
-    if (!selectedFile) return;
-    setPublishMessage('');
-    try {
-      const endpoint = `${buildFileExportApiPath(selectedFile)}?format=${encodeURIComponent(format)}`;
-      const res = await fetch(endpoint);
-      if (!res.ok) {
-        const payload = await res.json();
-        throw new Error(payload.error ?? 'Could not export file');
-      }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = selectedFile.replace(/\.md$/i, `.${format}`);
-      anchor.click();
-      URL.revokeObjectURL(url);
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Could not export file';
-      setPublishMessage(message);
-    }
-  }
-
-  async function handlePublish() {
-    if (!selectedFile || !publishProfileId) return;
-    setIsPublishing(true);
-    setPublishMessage('');
-    try {
-      const res = await fetch(buildFilePublishApiPath(selectedFile), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ profileId: publishProfileId }),
-      });
-      const payload = await res.json() as { error?: string; history?: PublishHistoryEntry[]; published?: PublishHistoryEntry };
-      if (!res.ok) {
-        throw new Error(payload.error ?? 'Could not publish');
-      }
-      setPublishHistory(payload.history ?? []);
-      setPublishMessage(payload.published?.outcome ?? 'Published successfully');
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Could not publish';
-      setPublishMessage(message);
-    } finally {
-      setIsPublishing(false);
-    }
-  }
-
-  async function handleRollback(entryId: string) {
-    if (!selectedFile) return;
-    setIsPublishing(true);
-    setPublishMessage('');
-    try {
-      const res = await fetch(buildFilePublishApiPath(selectedFile), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'rollback', entryId }),
-      });
-      const payload = await res.json() as { error?: string; history?: PublishHistoryEntry[] };
-      if (!res.ok) {
-        throw new Error(payload.error ?? 'Could not rollback');
-      }
-      setPublishHistory(payload.history ?? []);
-      setPublishMessage('Rollback restored the selected published revision as the active draft.');
-      setLatestRevisionStatus('needs-review');
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Could not rollback';
-      setPublishMessage(message);
-    } finally {
-      setIsPublishing(false);
-    }
-  }
-
   return (
     <div className="flex h-screen overflow-hidden bg-gray-950 text-gray-100">
       {sidebarOpen && (
@@ -622,21 +554,35 @@ export default function EditorPage() {
           lastCheckpointAt={lastCheckpointAt}
           mobileView={mobileView}
           compareMode={compareMode}
+          documentMode={documentMode}
           onMobileViewChange={setMobileView}
           onSaveCheckpoint={handleSaveCheckpoint}
           canSaveCheckpoint={canSaveCheckpoint}
           checkpointBlockReason={missingRequiredFields.length > 0 ? `Required: ${missingRequiredFields.join(', ')}` : undefined}
           onContinueWorkingDraft={handleContinueWorkingDraft}
           onToggleSidebar={() => setSidebarOpen((o) => !o)}
-          onToggleCompare={handleCompareToggle}
+          onToggleCompare={() => {
+            setCompareMode((m) => !m);
+            setDocumentMode(false);
+          }}
+          onToggleDocumentDashboard={() => {
+            setDocumentMode((mode) => !mode);
+            setCompareMode(false);
+          }}
         />
 
-        {compareMode ? (
-          <CompareView
-            selectedFile={selectedFile}
-            onFileSelect={setSelectedFile}
-            onDirtyChange={setCompareHasUnsavedChanges}
+        {documentMode ? (
+          <DocumentDashboard
+            documents={documents}
+            isLoading={isDocumentsLoading}
+            onPromote={(documentId, revisionId) => promoteRevision(documentId, revisionId, 'canonical')}
+            onSetAccepted={(documentId, revisionId) => promoteRevision(documentId, revisionId, 'accepted')}
+            onSetDraft={(documentId, revisionId) => promoteRevision(documentId, revisionId, 'draft')}
+            onAddComment={addComment}
+            onSelectFile={setSelectedFile}
           />
+        ) : compareMode ? (
+          <CompareView selectedFile={selectedFile} onFileSelect={setSelectedFile} />
         ) : !selectedFile ? (
           <div className="flex-1 flex flex-col items-center justify-center text-gray-500 gap-3">
             <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">

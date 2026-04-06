@@ -1,83 +1,69 @@
-interface AttemptState {
-  count: number;
-  firstFailureAt: number;
-  blockedUntil: number;
-}
-
 interface AuthThrottleStatus {
-  blocked: boolean;
+  allowed: boolean;
   retryAfterSeconds: number;
 }
 
-const WINDOW_MS = 10 * 60 * 1000;
-const MAX_FAILURES = 5;
-const BLOCK_MS = 2 * 60 * 1000;
+interface AuthAttemptState {
+  failedAttempts: number;
+  blockedUntil: number;
+}
 
-const attemptsByIp = new Map<string, AttemptState>();
+const MAX_FAILED_ATTEMPTS = 5;
+const BLOCK_WINDOW_MS = 5 * 60 * 1000;
+
+const attemptsByIp = new Map<string, AuthAttemptState>();
 
 function now(): number {
   return Date.now();
 }
 
-function getClientKey(ip: string | null): string {
-  return ip?.trim() || 'unknown';
-}
-
-// Helper function: keeps a small, testable transformation isolated from UI side effects.
-export function createAuthToken(secret: string): string {
-  return secret;
-}
-
-// Helper function: keeps a small, testable transformation isolated from UI side effects.
-export function getAuthThrottleStatus(ip: string | null): AuthThrottleStatus {
-  const key = getClientKey(ip);
-  const state = attemptsByIp.get(key);
-  if (!state) {
-    return { blocked: false, retryAfterSeconds: 0 };
+function getClientIp(request: Request): string {
+  const forwardedFor = request.headers.get('x-forwarded-for');
+  if (forwardedFor) {
+    return forwardedFor.split(',')[0]?.trim() || 'unknown';
   }
 
-  const nowTs = now();
-
-  if (state.blockedUntil > nowTs) {
-    return {
-      blocked: true,
-      retryAfterSeconds: Math.max(1, Math.ceil((state.blockedUntil - nowTs) / 1000)),
-    };
-  }
-
-  if (nowTs - state.firstFailureAt > WINDOW_MS) {
-    attemptsByIp.delete(key);
-    return { blocked: false, retryAfterSeconds: 0 };
-  }
+  const realIp = request.headers.get('x-real-ip');
+  if (realIp) return realIp.trim();
 
   return { blocked: false, retryAfterSeconds: 0 };
 }
 
-// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
-export function recordAuthFailure(ip: string | null): AuthThrottleStatus {
-  const key = getClientKey(ip);
-  const nowTs = now();
-  const existing = attemptsByIp.get(key);
-
-  if (!existing || nowTs - existing.firstFailureAt > WINDOW_MS) {
-    attemptsByIp.set(key, {
-      count: 1,
-      firstFailureAt: nowTs,
-      blockedUntil: 0,
-    });
-    return { blocked: false, retryAfterSeconds: 0 };
+// Public hook/helper: called from UI code to encapsulate shared stateful behavior.
+export function getAuthThrottleStatus(request: Request): AuthThrottleStatus {
+  const ip = getClientIp(request);
+  const state = attemptsByIp.get(ip);
+  if (!state) {
+    return { allowed: true, retryAfterSeconds: 0 };
   }
 
-  existing.count += 1;
-  if (existing.count >= MAX_FAILURES) {
-    existing.blockedUntil = nowTs + BLOCK_MS;
+  const now = nowMs();
+  if (state.blockedUntil <= now) {
+    attemptsByIp.delete(ip);
+    return { allowed: true, retryAfterSeconds: 0 };
   }
-  attemptsByIp.set(key, existing);
 
-  return getAuthThrottleStatus(ip);
+  return {
+    allowed: false,
+    retryAfterSeconds: Math.ceil((state.blockedUntil - now) / 1000),
+  };
 }
 
-// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
-export function resetAuthFailures(ip: string | null): void {
-  attemptsByIp.delete(getClientKey(ip));
+// Public hook/helper: called from UI code to encapsulate shared stateful behavior.
+export function recordAuthFailure(request: Request): void {
+  const ip = getClientIp(request);
+  const state = attemptsByIp.get(ip) ?? { failedAttempts: 0, blockedUntil: 0 };
+
+  const failedAttempts = state.failedAttempts + 1;
+  const shouldBlock = failedAttempts >= MAX_FAILED_ATTEMPTS;
+
+  attemptsByIp.set(ip, {
+    failedAttempts: shouldBlock ? 0 : failedAttempts,
+    blockedUntil: shouldBlock ? nowMs() + BLOCK_WINDOW_MS : 0,
+  });
+}
+
+// Public hook/helper: called from UI code to encapsulate shared stateful behavior.
+export function createAuthToken(secret: string): string {
+  return secret;
 }

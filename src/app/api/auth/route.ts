@@ -1,17 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { COOKIE_NAME, COOKIE_OPTIONS } from './cookie';
-import {
-  createAuthToken,
-  getAuthThrottleStatus,
-  recordAuthFailure,
-  resetAuthFailures,
-} from '@/lib/authThrottle';
+import { createAuthToken, getAuthThrottleStatus, recordAuthFailure } from '@/lib/authThrottle';
 
 // API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function POST(request: NextRequest) {
-  const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null;
-  const throttle = getAuthThrottleStatus(clientIp);
-  if (throttle.blocked) {
+  const throttle = getAuthThrottleStatus(request);
+  if (!throttle.allowed) {
     return NextResponse.json(
       { error: `Too many attempts. Try again in ${throttle.retryAfterSeconds}s.` },
       { status: 429 },
@@ -30,12 +24,11 @@ export async function POST(request: NextRequest) {
   }
 
   if (!password || password !== authPassword) {
-    recordAuthFailure(clientIp);
+    recordAuthFailure(request);
     return NextResponse.json({ error: 'Incorrect password' }, { status: 401 });
   }
 
   const token = createAuthToken(authSecret);
-  resetAuthFailures(clientIp);
   const response = NextResponse.json({ ok: true });
   response.cookies.set(COOKIE_NAME, token, COOKIE_OPTIONS);
   return response;

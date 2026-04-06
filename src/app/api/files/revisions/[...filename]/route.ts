@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { parseFilename } from '@/lib/parseFilename';
 import { readRevisions, writeRevisions } from '@/lib/revisionStorage';
 import { parseFilename } from '@/lib/parseFilename';
 import { RevisionInlineNote } from '@/types';
@@ -13,12 +14,7 @@ export async function GET(_request: Request, { params }: Params) {
     const revisions = await readRevisions(filename);
     return NextResponse.json({
       name: filename,
-      currentDraftRevisionId: null,
-      revisions: revisions.map((revision) => ({
-        id: revision.id,
-        createdAt: revision.createdAt,
-        size: new TextEncoder().encode(revision.content).byteLength,
-      })),
+      revisions,
     });
   } catch (err: unknown) {
     const e = err as { status?: number; message?: string };
