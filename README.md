@@ -1,36 +1,45 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Markdown Editor
 
-## Getting Started
+A personal markdown file editor and viewer built with Next.js.
 
-First, run the development server:
+## Local Development
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000). Notes are stored in the `notes/` directory by default. Set the `NOTES_DIR` environment variable to use a different path.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Deploying to Netlify
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### 1. Connect the repository
 
-## Learn More
+In the Netlify dashboard, create a new site and connect this repository. The `netlify.toml` file configures the build automatically:
 
-To learn more about Next.js, take a look at the following resources:
+- **Build command:** `npm run build`
+- **Publish directory:** `.next`
+- **Plugin:** `@netlify/plugin-nextjs` (handles Next.js App Router)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### 2. Set environment variables
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+In **Site Settings → Environment variables**, add the following:
 
-## Deploy on Vercel
+| Variable | Description |
+|---|---|
+| `AUTH_PASSWORD` | The password you will type on the login screen |
+| `AUTH_SECRET` | A long random secret used to sign the auth cookie — generate one with `openssl rand -hex 32` |
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### 3. Deploy
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Trigger a deploy (or push to your connected branch). Once live, every visit will redirect to a login page. Only someone with the correct `AUTH_PASSWORD` can access the app.
+
+### Notes storage
+
+On Netlify, notes are stored in **Netlify Blobs** (persistent key-value storage included with all Netlify plans). Notes created locally are not synced to Netlify and vice versa.
+
+## Authentication
+
+All routes are protected by a password set via the `AUTH_PASSWORD` environment variable. After a successful login, an httpOnly cookie is set that lasts 30 days. To log out, visit `/login` — a logout option can be added if needed.
+
+If `AUTH_SECRET` is not set, the site will return a `503` error on every request as a safety measure.
