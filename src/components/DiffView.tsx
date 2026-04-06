@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { diffLines, Change } from 'diff';
-import { DiffLine, DiffHunk } from '@/lib/diffUtils';
+import { DiffLine, DiffHunk, buildPreparedDiff } from '@/lib/diffUtils';
 
 interface DiffViewProps {
   contentA: string;
