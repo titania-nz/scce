@@ -7,11 +7,13 @@ interface ToolbarProps {
   lastCheckpointAt: string | null;
   mobileView: 'edit' | 'preview';
   compareMode: boolean;
+  documentMode: boolean;
   onMobileViewChange: (view: 'edit' | 'preview') => void;
   onSaveCheckpoint: () => void;
   onContinueWorkingDraft: () => void;
   onToggleSidebar: () => void;
   onToggleCompare: () => void;
+  onToggleDocumentDashboard: () => void;
 }
 
 // Helper function: keeps a small, testable transformation isolated from UI side effects.
@@ -31,11 +33,13 @@ export default function Toolbar({
   lastCheckpointAt,
   mobileView,
   compareMode,
+  documentMode,
   onMobileViewChange,
   onSaveCheckpoint,
   onContinueWorkingDraft,
   onToggleSidebar,
   onToggleCompare,
+  onToggleDocumentDashboard,
 }: ToolbarProps) {
   return (
     <div className="flex items-center gap-2 px-3 h-12 bg-gray-800 border-b border-gray-700 shrink-0">
@@ -71,6 +75,18 @@ export default function Toolbar({
       </span>
 
       {/* Compare toggle */}
+      <button
+        onClick={onToggleDocumentDashboard}
+        title="Document dashboard"
+        className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded transition-colors shrink-0 ${
+          documentMode
+            ? 'bg-purple-600 text-white hover:bg-purple-500'
+            : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+        }`}
+      >
+        Documents
+      </button>
+
       <button
         onClick={onToggleCompare}
         title="Compare two files (A/B)"

@@ -42,6 +42,7 @@ export interface RevisionNote {
   id: string;
   message: string;
   createdAt: string;
+  parentId?: string;
 }
 
 export interface Document {
@@ -71,6 +72,29 @@ export interface CreateRevisionInput {
   content: string;
   createdAt?: string;
   notes?: RevisionNote[];
+}
+
+
+export type DocumentBranchName = 'draft' | 'accepted' | 'canonical';
+
+export interface DocumentMilestone {
+  id: string;
+  revisionId: string;
+  label: string;
+  createdAt: string;
+}
+
+export interface DocumentBranchState {
+  draftRevisionId: string | null;
+  acceptedRevisionId: string | null;
+  canonicalRevisionId: string | null;
+  milestones: DocumentMilestone[];
+}
+
+export interface DocumentDashboardEntry {
+  document: Document;
+  revisions: DocumentRevision[];
+  branches: DocumentBranchState;
 }
 
 export interface ApiError {
