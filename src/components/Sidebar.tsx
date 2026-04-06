@@ -16,6 +16,7 @@ interface SidebarProps {
   onFileDeleted: (filename: string) => void;
   onFileRenamed: (oldName: string, newName: string) => void;
   onJumpToHeading: (heading: string) => void;
+  applyFilter: (filter: { chapterSearch: string; metaSearch: string; dateFrom: string; dateTo: string }) => void;
 }
 
 type RevisionMeta = RevisionMetaSummary;
@@ -83,6 +84,21 @@ interface SavedFilter {
 
 const DEFAULT_META: RevisionMeta = DEFAULT_REVISION_META;
 const SAVED_FILTERS_STORAGE_KEY = 'scce.savedSidebarFilters';
+
+// Helper function: keeps a small, testable transformation isolated from UI side effects.
+function getCurrentWeekRange(): { from: string; to: string } {
+  const now = new Date();
+  const startOfWeek = new Date(now);
+  startOfWeek.setDate(now.getDate() - now.getDay());
+  startOfWeek.setHours(0, 0, 0, 0);
+  const endOfWeek = new Date(startOfWeek);
+  endOfWeek.setDate(startOfWeek.getDate() + 6);
+  endOfWeek.setHours(23, 59, 59, 999);
+  return {
+    from: startOfWeek.toISOString().slice(0, 10),
+    to: endOfWeek.toISOString().slice(0, 10),
+  };
+}
 
 // Helper function: keeps a small, testable transformation isolated from UI side effects.
 function formatDate(value: string | undefined): string {
@@ -253,6 +269,7 @@ export default function Sidebar({
   onFileDeleted,
   onFileRenamed,
   onJumpToHeading,
+  applyFilter,
 }: SidebarProps) {
   const { files, isLoading, createFile, deleteFile, deleteFiles, renameFile } = useFiles();
   const [newFileName, setNewFileName] = useState('');
@@ -279,7 +296,27 @@ export default function Sidebar({
   const [selectedHeading, setSelectedHeading] = useState('');
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [savedFilters, setSavedFilters] = useState<Array<{ id: string; name: string; filter: any }>>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const renamingInFlightRef = useRef(false);
+
+  function getCurrentWeekRange() {
+    const now = new Date();
+    const startOfWeek = new Date(now);
+    startOfWeek.setDate(now.getDate() - now.getDay());
+    startOfWeek.setHours(0, 0, 0, 0);
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(startOfWeek.getDate() + 6);
+    endOfWeek.setHours(23, 59, 59, 999);
+    return {
+      from: startOfWeek.toISOString().split('T')[0],
+      to: endOfWeek.toISOString().split('T')[0],
+    };
+  }
+
+  function saveCurrentFilter() {
+    // TODO: implement saving current filter
+  }
 
   useEffect(() => {
     try {
@@ -697,6 +734,7 @@ export default function Sidebar({
   }
 
   async function handleRename(oldName: string) {
+    if (renamingInFlightRef.current) return;
     let newName = renameValue.trim();
     if (!newName) {
       setRenamingFile(null);
@@ -707,6 +745,7 @@ export default function Sidebar({
       setRenamingFile(null);
       return;
     }
+    renamingInFlightRef.current = true;
     setError(null);
     try {
       await renameFile(oldName, newName);
@@ -715,6 +754,8 @@ export default function Sidebar({
     } catch (err: unknown) {
       const e = err as { message?: string };
       setError(e.message ?? 'Could not rename file');
+    } finally {
+      renamingInFlightRef.current = false;
     }
   }
 
@@ -832,7 +873,7 @@ export default function Sidebar({
               <div key={filter.id} className="inline-flex items-center rounded border border-gray-600 overflow-hidden">
                 <button
                   type="button"
-                  onClick={() => applyFilter(filter)}
+                  onClick={() => applyFilter(filter.filter)}
                   className="text-[11px] px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-100"
                 >
                   {filter.name}

@@ -5,7 +5,11 @@ import { FileEntry, FileListResponse } from '@/types';
 import { buildFileApiPath } from '@/lib/fileApiPath';
 import { fetchJson } from '@/lib/fetchJson';
 
-const fetcher = (url: string) => fetchJson<FileListResponse>(url, 'Could not load files');
+const fetcher = (url: string) =>
+  fetch(url).then((r) => {
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  });
 
 // Public hook/helper: called from UI code to encapsulate shared stateful behavior.
 export function useFiles() {

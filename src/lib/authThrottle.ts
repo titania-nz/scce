@@ -13,7 +13,7 @@ const BLOCK_WINDOW_MS = 5 * 60 * 1000;
 
 const attemptsByIp = new Map<string, AuthAttemptState>();
 
-function nowMs(): number {
+function now(): number {
   return Date.now();
 }
 
@@ -26,7 +26,7 @@ function getClientIp(request: Request): string {
   const realIp = request.headers.get('x-real-ip');
   if (realIp) return realIp.trim();
 
-  return 'unknown';
+  return { blocked: false, retryAfterSeconds: 0 };
 }
 
 // Public hook/helper: called from UI code to encapsulate shared stateful behavior.
