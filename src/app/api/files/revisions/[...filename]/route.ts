@@ -4,8 +4,6 @@ import { parseFilename } from '@/lib/parseFilename';
 import { RevisionInlineNote } from '@/types';
 
 type Params = { params: Promise<{ filename: string[] }> };
-// Keep this route on a single storage import path to avoid duplicate-import merge
-// regressions (e.g. duplicate `readRevisions` symbols in Turbopack builds).
 
 // API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function GET(_request: Request, { params }: Params) {

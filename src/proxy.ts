@@ -21,7 +21,7 @@ export async function proxy(request: NextRequest) {
     return new NextResponse('AUTH_SECRET environment variable is not set.', { status: 503 });
   }
 
-  const hasValidToken = !!token && (verifyAuthToken(token, secret) || token === secret);
+  const hasValidToken = !!token && verifyAuthToken(token, secret);
   if (!hasValidToken) {
     const loginUrl = new URL('/login', request.url);
     if (pathname !== '/') {
