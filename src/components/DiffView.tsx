@@ -1,7 +1,8 @@
 'use client';
 
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
-import { computeDiff, DiffHunk, DiffLine } from '@/lib/diffUtils';
+import { diffLines, Change } from 'diff';
+import { DiffLine, DiffHunk, buildPreparedDiff } from '@/lib/diffUtils';
 
 export type HunkMergeState = 'unresolved' | 'takeA' | 'takeB' | 'edited';
 
@@ -22,7 +23,7 @@ interface DiffViewProps {
   onAction?: () => void | Promise<void>;
 }
 
-function DiffLineRow({ line }: { line: DiffLine; key?: string | number }) {
+function DiffLineRow({ line }: { line: DiffLine }) {
   const lineNumClass = 'w-10 shrink-0 text-right select-none text-gray-600 tabular-nums';
 
   let rowClass = 'flex font-mono text-xs leading-5';
@@ -71,7 +72,6 @@ function HunkBlock({
   onEditHunk?: (hunkId: number) => void;
   onEditedContentChange?: (hunkId: number, value: string) => void;
   hunkRef: (el: HTMLDivElement | null) => void;
-  key?: string | number;
 }) {
   const isResolved = mergeState !== 'unresolved';
 
@@ -147,12 +147,14 @@ export default function DiffView({
   actionDisabled = false,
   onAction,
 }: DiffViewProps) {
-  const diff = useMemo(() => computeDiff(contentA, contentB), [contentA, contentB]);
+  const diff = useMemo(() => buildPreparedDiff(contentA, contentB), [contentA, contentB]);
   const [activeIdx, setActiveIdx] = useState(0);
+  const [resolutions, setResolutions] = useState<Record<number, 'a' | 'b'>>({});
   const hunkRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
   useEffect(() => {
     setActiveIdx(0);
+    setResolutions({});
   }, [contentA, contentB]);
 
   const setHunkRef = useCallback(
@@ -168,7 +170,62 @@ export default function DiffView({
     hunkRefs.current.get(idx)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
-  const { hunks, totalAdditions, totalRemovals, isIdentical } = diff;
+  const { hunks, mergeHunks, totalAdditions, totalRemovals, isIdentical } = diff;
+
+  const mergedContentFromResolutions = useMemo(() => {
+    const chunks = diffLines(contentA, contentB);
+    let mergeHunkIdx = 0;
+    let idx = 0;
+    let result = '';
+
+    while (idx < chunks.length) {
+      const chunk = chunks[idx];
+      if (!chunk.added && !chunk.removed) {
+        result += chunk.value;
+        idx++;
+        continue;
+      }
+
+      const group: Change[] = [];
+      while (idx < chunks.length && (chunks[idx].added || chunks[idx].removed)) {
+        group.push(chunks[idx]);
+        idx++;
+      }
+
+      const fallbackB = group.filter((entry) => !!entry.added).map((entry) => entry.value).join('');
+      const fallbackA = group.filter((entry) => !!entry.removed).map((entry) => entry.value).join('');
+      const resolution = resolutions[mergeHunkIdx];
+
+      if (resolution === 'a') result += fallbackA;
+      else if (resolution === 'b') result += fallbackB;
+      else result += fallbackB;
+
+      mergeHunkIdx++;
+    }
+
+    return result;
+  }, [contentA, contentB, resolutions]);
+
+  const unresolvedCount = mergeHunks.length - Object.keys(resolutions).length;
+
+  useEffect(() => {
+    if (!onMergeStateChange) return;
+    if (isIdentical) {
+      onMergeStateChange({ mergedContent: contentA, unresolvedCount: 0 });
+      return;
+    }
+
+    const fallback = diff.stableMergedBContent;
+    const resolvedMergedContent = unresolvedCount === 0 ? mergedContentFromResolutions : fallback;
+    onMergeStateChange({ mergedContent: resolvedMergedContent, unresolvedCount });
+  }, [
+    contentA,
+    diff.stableMergedBContent,
+    isIdentical,
+    mergedContentFromResolutions,
+    onMergeStateChange,
+    unresolvedCount,
+  ]);
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-gray-950">

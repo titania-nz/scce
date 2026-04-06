@@ -1,12 +1,20 @@
 import fs from 'fs';
 import path from 'path';
 import {
+  CollaborationState,
   CreateDocumentInput,
   CreateRevisionInput,
   Document,
   DocumentRevision,
   FileEntry,
+  RevisionAuditEvent,
+  RevisionComment,
+  ReviewRequest,
   RevisionEntry,
+  RevisionLock,
+  RevisionMention,
+  RevisionNotification,
+  RevisionPresence,
 } from '@/types';
 import { isNetlifyRuntime, getBlobStore } from '@/lib/netlifyRuntime';
 
@@ -245,6 +253,45 @@ function ensureRevision(revision: DocumentRevision): DocumentRevision {
   return {
     ...revision,
     notes: Array.isArray(revision.notes) ? revision.notes : [],
+    collaboration: ensureCollaborationState(revision.collaboration),
+  };
+}
+
+function ensureCollaborationState(
+  collaboration: Partial<CollaborationState> | undefined,
+): CollaborationState {
+  return {
+    presence: Array.isArray(collaboration?.presence) ? collaboration.presence : [],
+    lock: collaboration?.lock ?? null,
+    comments: Array.isArray(collaboration?.comments) ? collaboration.comments : [],
+    reviewRequests: Array.isArray(collaboration?.reviewRequests) ? collaboration.reviewRequests : [],
+    mentions: Array.isArray(collaboration?.mentions) ? collaboration.mentions : [],
+    notifications: Array.isArray(collaboration?.notifications) ? collaboration.notifications : [],
+    auditTrail: Array.isArray(collaboration?.auditTrail) ? collaboration.auditTrail : [],
+  };
+}
+
+function makeCollaborationId(prefix: string): string {
+  return `${prefix}-${generateRevisionId(nowIso())}`;
+}
+
+function createAuditEvent(
+  actorId: string,
+  actorName: string,
+  action: RevisionAuditEvent['action'],
+  targetType?: RevisionAuditEvent['targetType'],
+  targetId?: string,
+  metadata?: Record<string, string>,
+): RevisionAuditEvent {
+  return {
+    id: makeCollaborationId('audit'),
+    actorId,
+    actorName,
+    action,
+    targetType,
+    targetId,
+    createdAt: nowIso(),
+    metadata,
   };
 }
 
@@ -255,6 +302,7 @@ async function readDocumentRootRecord(documentId: string): Promise<Document> {
     if (!store) throw Object.assign(new Error('Document not found'), { status: 404 });
     try {
       const buffer = await store.get(documentMetaBlobKey(documentId));
+      if (!buffer) throw new Error('missing');
       return JSON.parse(new TextDecoder().decode(buffer)) as Document;
     } catch {
       throw Object.assign(new Error('Document not found'), { status: 404 });
@@ -278,6 +326,7 @@ async function migrateLegacyFileToInitialRevision(filename: string): Promise<voi
     if (!store) return;
     try {
       const buffer = await store.get(key);
+      if (!buffer) return;
       content = new TextDecoder().decode(buffer);
     } catch {
       return;
@@ -320,8 +369,8 @@ export function getNotesDir(): string {
   if (isNetlifyRuntime) {
     return '';
   }
-  const dir = process.env.NOTES_DIR ?? path.join(process.cwd(), 'notes');
-  fs.mkdirSync(dir, { recursive: true });
+  const dir = process.env.NOTES_DIR ?? './notes';
+  /*turbopackIgnore: true*/ fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
 
@@ -399,12 +448,21 @@ export async function appendImmutableRevision(
   const createdAt = input.createdAt ?? nowIso();
   const revisionId = generateRevisionId(createdAt);
 
+  const collaboration = ensureCollaborationState(input.collaboration);
+
   const revision: DocumentRevision = {
     id: revisionId,
     documentId,
     createdAt,
     content: input.content,
     notes: input.notes ?? [],
+    collaboration: {
+      ...collaboration,
+      auditTrail: [
+        ...collaboration.auditTrail,
+        createAuditEvent('system', 'System', 'revision-created', undefined, revisionId),
+      ],
+    },
   };
 
   if (isNetlifyRuntime) {
@@ -418,6 +476,150 @@ export async function appendImmutableRevision(
   const revisionPath = path.join(revisionsDir, `${revision.id}.json`);
   fs.writeFileSync(revisionPath, JSON.stringify(revision, null, 2), 'utf8');
   return revision;
+}
+
+type CollaborationMutationInput = {
+  actorId: string;
+  actorName: string;
+  presence?: RevisionPresence[];
+  lock?: RevisionLock | null;
+  addComment?: {
+    message: string;
+  };
+  requestReview?: {
+    reviewerId: string;
+    reviewerName: string;
+    message?: string;
+  };
+  mention?: {
+    toUserId: string;
+    message: string;
+  };
+  markNotificationReadId?: string;
+};
+
+export async function mutateRevisionCollaboration(
+  documentId: string,
+  revisionId: string,
+  mutation: CollaborationMutationInput,
+): Promise<DocumentRevision> {
+  const revision = await getRevision(documentId, revisionId);
+  const next = ensureRevision(revision);
+
+  if (mutation.presence) {
+    next.collaboration.presence = mutation.presence;
+    next.collaboration.auditTrail.push(
+      createAuditEvent(mutation.actorId, mutation.actorName, 'presence-updated'),
+    );
+  }
+
+  if (mutation.lock !== undefined) {
+    const lockAction = mutation.lock ? 'lock-acquired' : 'lock-released';
+    next.collaboration.lock = mutation.lock;
+    next.collaboration.auditTrail.push(
+      createAuditEvent(mutation.actorId, mutation.actorName, lockAction, 'lock', mutation.lock?.userId),
+    );
+  }
+
+  if (mutation.addComment) {
+    const comment: RevisionComment = {
+      id: makeCollaborationId('comment'),
+      authorId: mutation.actorId,
+      authorName: mutation.actorName,
+      message: mutation.addComment.message,
+      createdAt: nowIso(),
+    };
+    next.collaboration.comments.push(comment);
+    next.collaboration.auditTrail.push(
+      createAuditEvent(mutation.actorId, mutation.actorName, 'comment-added', 'comment', comment.id),
+    );
+  }
+
+  if (mutation.requestReview) {
+    const reviewRequest: ReviewRequest = {
+      id: makeCollaborationId('review'),
+      requestedById: mutation.actorId,
+      requestedByName: mutation.actorName,
+      reviewerId: mutation.requestReview.reviewerId,
+      reviewerName: mutation.requestReview.reviewerName,
+      message: mutation.requestReview.message,
+      status: 'pending',
+      createdAt: nowIso(),
+    };
+    const notification: RevisionNotification = {
+      id: makeCollaborationId('notification'),
+      userId: mutation.requestReview.reviewerId,
+      type: 'review-request',
+      message: `${mutation.actorName} requested your review.`,
+      createdAt: nowIso(),
+    };
+    next.collaboration.reviewRequests.push(reviewRequest);
+    next.collaboration.notifications.push(notification);
+    next.collaboration.auditTrail.push(
+      createAuditEvent(
+        mutation.actorId,
+        mutation.actorName,
+        'review-requested',
+        'review-request',
+        reviewRequest.id,
+      ),
+    );
+  }
+
+  if (mutation.mention) {
+    const mention: RevisionMention = {
+      id: makeCollaborationId('mention'),
+      fromUserId: mutation.actorId,
+      fromDisplayName: mutation.actorName,
+      toUserId: mutation.mention.toUserId,
+      message: mutation.mention.message,
+      createdAt: nowIso(),
+    };
+    const notification: RevisionNotification = {
+      id: makeCollaborationId('notification'),
+      userId: mutation.mention.toUserId,
+      type: 'mention',
+      message: `${mutation.actorName} mentioned you: ${mutation.mention.message}`,
+      createdAt: nowIso(),
+    };
+    next.collaboration.mentions.push(mention);
+    next.collaboration.notifications.push(notification);
+    next.collaboration.auditTrail.push(
+      createAuditEvent(mutation.actorId, mutation.actorName, 'mention-added', 'mention', mention.id),
+    );
+  }
+
+  if (mutation.markNotificationReadId) {
+    next.collaboration.notifications = next.collaboration.notifications.map((notification) => {
+      if (notification.id !== mutation.markNotificationReadId || notification.readAt) {
+        return notification;
+      }
+      return {
+        ...notification,
+        readAt: nowIso(),
+      };
+    });
+    next.collaboration.auditTrail.push(
+      createAuditEvent(
+        mutation.actorId,
+        mutation.actorName,
+        'notification-read',
+        'notification',
+        mutation.markNotificationReadId,
+      ),
+    );
+  }
+
+  if (isNetlifyRuntime) {
+    const store = getBlobStore();
+    if (!store) throw new Error('Could not update collaboration state');
+    await store.set(documentRevisionBlobKey(documentId, revisionId), JSON.stringify(next, null, 2));
+    return next;
+  }
+
+  const revisionPath = path.join(getDocumentRevisionsDirPath(documentId), `${revisionId}.json`);
+  fs.writeFileSync(revisionPath, JSON.stringify(next, null, 2), 'utf8');
+  return next;
 }
 
 // API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
@@ -435,6 +637,7 @@ export async function listRevisionsByDocumentId(documentId: string): Promise<Doc
     for (const blob of blobs) {
       if (!blob.key.endsWith('.json')) continue;
       const buffer = await store.get(blob.key);
+      if (!buffer) continue;
       const parsed = JSON.parse(new TextDecoder().decode(buffer)) as DocumentRevision;
       revisions.push(ensureRevision(parsed));
     }
@@ -730,6 +933,8 @@ export async function renameFile(oldName: string, newName: string): Promise<void
         ],
       });
     }
+
+    await removeDocumentData(oldName);
   }
 }
 

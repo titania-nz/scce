@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { verifyAuthToken } from '@/lib/authToken';
 import { COOKIE_NAME } from './app/api/auth/cookie';
-import { verifyAuthToken } from './lib/authToken';
 
 const PUBLIC_PATHS = ['/login', '/api/auth'];
 
@@ -21,9 +21,8 @@ export async function proxy(request: NextRequest) {
     return new NextResponse('AUTH_SECRET environment variable is not set.', { status: 503 });
   }
 
-  const isValidToken = token ? await verifyAuthToken(token, secret) : false;
-
-  if (!isValidToken) {
+  const hasValidToken = !!token && verifyAuthToken(token, secret);
+  if (!hasValidToken) {
     const loginUrl = new URL('/login', request.url);
     if (pathname !== '/') {
       loginUrl.searchParams.set('from', pathname);

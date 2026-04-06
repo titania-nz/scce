@@ -9,18 +9,47 @@ import DiffView, { HunkMergeState } from './DiffView';
 interface CompareViewProps {
   selectedFile?: string | null;
   onFileSelect?: (filename: string | null) => void;
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
+const EditorPane = dynamic(() => import('./EditorPane'), { ssr: false });
+
 // Main component export: this is the entry point rendered by parent routes/components.
-export default function CompareView({ selectedFile = null, onFileSelect }: CompareViewProps) {
-  const { files } = useFiles();
+export default function CompareView({ selectedFile = null, onFileSelect, onDirtyChange }: CompareViewProps) {
+  const { files, createFile, mutate: mutateFiles } = useFiles();
   const [selectedA, setSelectedA] = useState<string | null>(selectedFile);
   const [selectedB, setSelectedB] = useState<string | null>(null);
   const [revisionA, setRevisionA] = useState<string>('latest');
   const [revisionB, setRevisionB] = useState<string>('latest');
+  const [destination, setDestination] = useState<'overwrite-a' | 'overwrite-b' | 'new-path'>('overwrite-a');
+  const [newFilePath, setNewFilePath] = useState('');
+  const [isFinalizing, setIsFinalizing] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
+  const [mergeNote, setMergeNote] = useState('');
+  const [mergeTagsInput, setMergeTagsInput] = useState('');
+  const [mergeStatus, setMergeStatus] = useState<RevisionStatus | ''>('');
+  const [mergedContent, setMergedContent] = useState('');
+  const [autoMergedContent, setAutoMergedContent] = useState('');
+  const [mergedDirty, setMergedDirty] = useState(false);
+  const [unresolvedHunks, setUnresolvedHunks] = useState(0);
+  const [isSavingMerged, setIsSavingMerged] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
+  const pendingSaveRef = useRef<{ filename: string; content: string } | null>(null);
 
-  const { content: contentA, revisions: revisionsA, isLoading: loadingA } = useFileContent(selectedA);
-  const { content: contentB, revisions: revisionsB, isLoading: loadingB } = useFileContent(selectedB);
+  const {
+    content: contentA,
+    revisions: revisionsA,
+    isLoading: loadingA,
+    saveContent: saveA,
+  } = useFileContent(selectedA);
+  const {
+    content: contentB,
+    revisions: revisionsB,
+    isLoading: loadingB,
+    saveContent: saveB,
+  } = useFileContent(selectedB);
 
   const bothSelected = selectedA && selectedB;
   const isLoading = loadingA || loadingB;
@@ -168,6 +197,83 @@ export default function CompareView({ selectedFile = null, onFileSelect }: Compa
             ))}
           </select>
         </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold text-gray-400 shrink-0">Destination</span>
+          <select
+            value={destination}
+            onChange={(e) => {
+              setDestination(e.target.value as 'overwrite-a' | 'overwrite-b' | 'new-path');
+              setSaveError(null);
+              setSaveSuccess(null);
+            }}
+            className={`${selectClass} max-w-64`}
+          >
+            <option value="overwrite-a">Overwrite file A</option>
+            <option value="overwrite-b">Overwrite file B</option>
+            <option value="new-path">Save as new file path</option>
+          </select>
+
+          {destination === 'new-path' && (
+            <input
+              className={`${selectClass} min-w-64`}
+              value={newFilePath}
+              onChange={(e) => setNewFilePath(e.target.value)}
+              placeholder="docs/merged-result.md"
+            />
+          )}
+        </div>
+
+        <div className="grid gap-2 sm:grid-cols-3">
+          <input
+            className={selectClass}
+            value={mergeNote}
+            onChange={(e) => setMergeNote(e.target.value)}
+            placeholder="Revision note (optional)"
+          />
+          <input
+            className={selectClass}
+            value={mergeTagsInput}
+            onChange={(e) => setMergeTagsInput(e.target.value)}
+            placeholder="Tags (optional, comma-separated)"
+          />
+          <select
+            className={selectClass}
+            value={mergeStatus}
+            onChange={(e) => setMergeStatus((e.target.value as RevisionStatus) || '')}
+          >
+            <option value="">No status</option>
+            <option value="accepted">Accepted</option>
+            <option value="rejected">Rejected</option>
+            <option value="needs-review">Needs review</option>
+          </select>
+        </div>
+
+        {(saveSuccess || saveError) && (
+          <div className={`text-xs ${saveError ? 'text-red-400' : 'text-green-400'}`}>
+            {saveError ?? saveSuccess}
+          </div>
+        )}
+        <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-gray-700">
+          <label className="text-xs text-gray-300 shrink-0">Merge target</label>
+          <input
+            value={targetFilename ?? ''}
+            onChange={(e) => setNewFilePath(e.target.value)}
+            placeholder="merged-result.md"
+            className="flex-1 min-w-56 text-xs bg-gray-800 text-gray-200 border border-gray-600 rounded px-2 py-1 focus:outline-none focus:border-blue-500"
+          />
+          <button
+            onClick={handleFinalize}
+            disabled={!bothSelected || isSavingMerged}
+            className="px-2 py-1 rounded bg-blue-600 hover:bg-blue-500 text-xs text-white disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {isSavingMerged ? 'Saving…' : 'Finalize Merge'}
+          </button>
+          <span className={`text-xs ${unresolvedHunks > 0 ? 'text-amber-300' : 'text-gray-500'}`}>
+            {unresolvedHunks > 0 ? `${unresolvedHunks} unresolved hunk(s)` : 'All hunks resolved'}
+          </span>
+        </div>
+        {errorMessage && <p className="text-xs text-red-300">{errorMessage}</p>}
       </div>
 
       {!bothSelected ? (
