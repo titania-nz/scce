@@ -55,10 +55,30 @@ export default function Sidebar({
   const [renamingFile, setRenamingFile] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['']));
+  const [chapterSearch, setChapterSearch] = useState('');
+  const [metaSearch, setMetaSearch] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const tree = useMemo(() => buildTree(files), [files]);
+  const filteredFiles = useMemo(() => {
+    const chapterFilter = chapterSearch.trim().toLowerCase();
+    const metaFilter = metaSearch.trim().toLowerCase();
+    const fromDate = dateFrom ? new Date(`${dateFrom}T00:00:00`) : null;
+    const toDate = dateTo ? new Date(`${dateTo}T23:59:59`) : null;
+
+    return files.filter((file) => {
+      const fileDate = new Date(file.mtime);
+      const chapterMatches = !chapterFilter || file.name.toLowerCase().includes(chapterFilter);
+      const metaMatches = !metaFilter || file.name.toLowerCase().includes(metaFilter);
+      const fromMatches = !fromDate || fileDate >= fromDate;
+      const toMatches = !toDate || fileDate <= toDate;
+      return chapterMatches && metaMatches && fromMatches && toMatches;
+    });
+  }, [chapterSearch, dateFrom, dateTo, files, metaSearch]);
+
+  const tree = useMemo(() => buildTree(filteredFiles), [filteredFiles]);
 
   function resetNewInput() {
     setShowNewInput(false);
@@ -251,7 +271,7 @@ export default function Sidebar({
   }
 
   return (
-    <aside className="flex flex-col h-full bg-gray-900 text-gray-100 w-64 shrink-0">
+    <aside className="flex flex-col h-full bg-gray-900 text-gray-100 w-80 shrink-0 border-r border-gray-800">
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
         <span className="text-sm font-semibold text-gray-300 uppercase tracking-wider">Files</span>
         <div className="flex items-center gap-2">
@@ -288,6 +308,39 @@ export default function Sidebar({
             ＋
           </button>
         </div>
+      </div>
+
+      <div className="px-3 py-2 border-b border-gray-700 space-y-2">
+        <input
+          type="text"
+          value={chapterSearch}
+          onChange={(e) => setChapterSearch(e.target.value)}
+          placeholder="Filter by path"
+          className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
+        />
+        <div className="grid grid-cols-2 gap-2">
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+            className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
+            aria-label="Modified from date"
+          />
+          <input
+            type="date"
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+            className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
+            aria-label="Modified to date"
+          />
+        </div>
+        <input
+          type="text"
+          value={metaSearch}
+          onChange={(e) => setMetaSearch(e.target.value)}
+          placeholder="Filter by filename"
+          className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
+        />
       </div>
 
       {error && (
@@ -334,8 +387,8 @@ export default function Sidebar({
         {isLoading && (
           <div className="px-4 py-3 text-sm text-gray-500">Loading...</div>
         )}
-        {!isLoading && files.length === 0 && (
-          <div className="px-4 py-3 text-sm text-gray-500">No files yet</div>
+        {!isLoading && filteredFiles.length === 0 && (
+          <div className="px-4 py-3 text-sm text-gray-500">No matching files</div>
         )}
         {!isLoading && renderTree(tree)}
       </div>
