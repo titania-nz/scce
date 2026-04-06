@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { listRevisions } from '@/lib/fileStorage';
+import { readRevisions } from '@/lib/revisionStorage';
 import { parseFilename } from '@/lib/parseFilename';
 
 type Params = { params: Promise<{ filename: string[] }> };
@@ -9,11 +9,10 @@ export async function GET(_request: Request, { params }: Params) {
   try {
     const { filename: rawFilename } = await params;
     const filename = parseFilename(rawFilename);
-    const meta = await listRevisions(filename);
+    const revisions = await readRevisions(filename);
     return NextResponse.json({
       name: filename,
-      currentDraftRevisionId: meta.currentDraftRevisionId,
-      revisions: meta.revisions,
+      revisions,
     });
   } catch (err: unknown) {
     const e = err as { status?: number; message?: string };

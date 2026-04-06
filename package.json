@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "verify:revision-route-imports": "node scripts/check-revision-route-imports.mjs"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.5.0",
