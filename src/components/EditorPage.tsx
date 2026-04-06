@@ -32,6 +32,7 @@ export default function EditorPage() {
   const [status, setStatus] = useState<RevisionStatus | ''>('');
   const [workingDraftByFile, setWorkingDraftByFile] = useState<Record<string, string>>({});
   const [lastCheckpointAtByFile, setLastCheckpointAtByFile] = useState<Record<string, string>>({});
+  const [jumpToHeadingToken, setJumpToHeadingToken] = useState('');
 
   const { content: loadedContent, revisions, isLoading, saveContent } = useFileContent(selectedFile);
   const prevFileRef = useRef<string | null>(null);
@@ -218,6 +219,7 @@ export default function EditorPage() {
           onFileSelect={handleFileSelect}
           onFileDeleted={handleFileDeleted}
           onFileRenamed={handleFileRenamed}
+          onJumpToHeading={(heading) => setJumpToHeadingToken(`${Date.now()}::${heading}`)}
         />
       </div>
 
@@ -260,7 +262,7 @@ export default function EditorPage() {
               <div className="hidden md:block w-px bg-gray-700 shrink-0" />
 
               <div className={`flex-1 flex overflow-hidden ${mobileView === 'edit' ? 'hidden md:flex' : 'flex'}`}>
-                <PreviewPane content={content} />
+                <PreviewPane content={content} jumpToHeadingToken={jumpToHeadingToken} />
               </div>
             </div>
 
