@@ -13,8 +13,8 @@ import { useDocuments } from '@/hooks/useDocuments';
 import type { Revision, RevisionInlineNote } from '@/types';
 import { RevisionStatus } from '@/types';
 import { useFiles } from '@/hooks/useFiles';
-import { buildFileExportApiPath, buildFilePublishApiPath, buildFileApiPath } from '@/lib/fileApiPath';
-import { PublishHistoryEntry, PublishTargetProfile, RevisionStatus, Revision, RevisionInlineNote } from '@/types';
+import { buildFileApiPath } from '@/lib/fileApiPath';
+import { RevisionStatus } from '@/types';
 
 // CodeMirror accesses browser APIs — must be dynamically imported with ssr:false
 const EditorPane = dynamic(() => import('./EditorPane'), { ssr: false });
@@ -84,6 +84,76 @@ function computeRevisionSummary(previous: Revision | undefined, current: Revisio
   return { addedChars, removedChars, addedHeadings, removedHeadings };
 }
 
+interface CommandItem {
+  id: string;
+  title: string;
+  keywords?: string[];
+  run: () => void | Promise<void>;
+}
+
+type ShortcutMap = Record<string, string>;
+
+const DEFAULT_SHORTCUTS: ShortcutMap = {
+  saveCheckpoint: 'Mod+S',
+  commandPalette: 'Mod+K',
+  createFile: 'Mod+N',
+  openFilePalette: 'Mod+O',
+  renameFile: 'Shift+Mod+R',
+  createDailyNote: 'Shift+Mod+D',
+};
+
+const SHORTCUT_STORAGE_KEY = 'editor-shortcuts-v1';
+const SHORTCUT_LABELS: Record<string, string> = {
+  saveCheckpoint: 'Save checkpoint',
+  commandPalette: 'Open command palette',
+  createFile: 'Create file',
+  openFilePalette: 'Find file',
+  renameFile: 'Rename current file',
+  createDailyNote: 'Create daily note',
+};
+
+const TEMPLATE_SNIPPETS: Array<{ id: string; title: string; content: (date: string) => string }> = [
+  {
+    id: 'meeting-notes',
+    title: 'Meeting notes',
+    content: (date) => `# Meeting Notes\n\n- Date: ${date}\n- Attendees:\n- Topic:\n\n## Agenda\n- \n\n## Notes\n- \n\n## Action Items\n- [ ] `,
+  },
+  {
+    id: 'rfc',
+    title: 'RFC',
+    content: (date) => `# RFC: \n\n- Status: Draft\n- Owner:\n- Date: ${date}\n\n## Context\n\n## Proposal\n\n## Alternatives\n\n## Risks\n\n## Rollout plan`,
+  },
+  {
+    id: 'changelog',
+    title: 'Changelog',
+    content: (date) => `# Changelog (${date})\n\n## Added\n- \n\n## Changed\n- \n\n## Fixed\n- `,
+  },
+];
+
+function toDateStamp(date = new Date()): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function parseShortcut(shortcut: string): { key: string; shift: boolean; alt: boolean; mod: boolean } | null {
+  const parts = shortcut.split('+').map((part) => part.trim()).filter(Boolean);
+  if (parts.length === 0) return null;
+  const key = parts[parts.length - 1].toLowerCase();
+  return {
+    key,
+    shift: parts.some((part) => part.toLowerCase() === 'shift'),
+    alt: parts.some((part) => part.toLowerCase() === 'alt'),
+    mod: parts.some((part) => part.toLowerCase() === 'mod'),
+  };
+}
+
+function eventToShortcut(event: KeyboardEvent): string {
+  const key = event.key.length === 1 ? event.key.toUpperCase() : event.key;
+  const parts: string[] = [];
+  if (event.shiftKey) parts.push('Shift');
+  if (event.altKey) parts.push('Alt');
+  if (event.metaKey || event.ctrlKey) parts.push('Mod');
+  parts.push(key);
+  return parts.join('+');
 const LOCAL_DRAFT_KEY = 'scce:working-drafts:v1';
 const LOCAL_QUEUE_KEY = 'scce:checkpoint-queue:v1';
 
@@ -115,6 +185,7 @@ function writeLocalJson<T>(storageKey: string, value: T): void {
 
 // Main component export: this is the entry point rendered by parent routes/components.
 export default function EditorPage() {
+  const { files, createFile, renameFile } = useFiles();
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [content, setContent] = useState('');
   const [isDirty, setIsDirty] = useState(false);
@@ -138,6 +209,15 @@ export default function EditorPage() {
   const { files } = useFiles();
   const [workingDraftByFile, setWorkingDraftByFile] = useState<Record<string, string>>({});
   const [lastCheckpointAtByFile, setLastCheckpointAtByFile] = useState<Record<string, string>>({});
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [commandQuery, setCommandQuery] = useState('');
+  const [shortcutEditorOpen, setShortcutEditorOpen] = useState(false);
+  const [shortcuts, setShortcuts] = useState<ShortcutMap>(DEFAULT_SHORTCUTS);
+  const [capturingShortcutFor, setCapturingShortcutFor] = useState<string | null>(null);
+  const [backlinks, setBacklinks] = useState<string[]>([]);
+  const commandInputRef = useRef<HTMLInputElement>(null);
+
+  const { content: loadedContent, revisions, isLoading, saveContent } = useFileContent(selectedFile);
   const [isOffline, setIsOffline] = useState(false);
   const [queuedCheckpoints, setQueuedCheckpoints] = useState<QueuedCheckpoint[]>([]);
   const [recoverableDrafts, setRecoverableDrafts] = useState<Record<string, string>>({});
@@ -268,6 +348,24 @@ export default function EditorPage() {
   }, [files]);
 
   useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(SHORTCUT_STORAGE_KEY);
+      if (!stored) return;
+      const parsed = JSON.parse(stored) as ShortcutMap;
+      setShortcuts((prev) => ({ ...prev, ...parsed }));
+    } catch {
+      // ignore malformed local settings
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(SHORTCUT_STORAGE_KEY, JSON.stringify(shortcuts));
+  }, [shortcuts]);
+
+  useEffect(() => {
+    if (!commandPaletteOpen) return;
+    commandInputRef.current?.focus();
+  }, [commandPaletteOpen]);
     const initialOffline = typeof navigator !== 'undefined' ? !navigator.onLine : false;
     setIsOffline(initialOffline);
     setQueuedCheckpoints(readLocalJson<QueuedCheckpoint[]>(LOCAL_QUEUE_KEY, []));
@@ -448,6 +546,90 @@ export default function EditorPage() {
   });
   const canSaveCheckpoint = isDirty && !isSaving && missingRequiredFields.length === 0;
 
+  const createNewFile = useCallback(async () => {
+    const rawName = window.prompt('New file name', 'untitled');
+    if (!rawName) return;
+    const nextName = rawName.endsWith('.md') ? rawName : `${rawName}.md`;
+    await createFile(nextName, '');
+    setSelectedFile(nextName);
+    setCommandPaletteOpen(false);
+  }, [createFile]);
+
+  const renameCurrentFile = useCallback(async () => {
+    if (!selectedFile) return;
+    const currentStem = selectedFile.replace(/\.md$/, '');
+    const rawName = window.prompt('Rename file to', currentStem);
+    if (!rawName) return;
+    const nextName = rawName.endsWith('.md') ? rawName : `${rawName}.md`;
+    await renameFile(selectedFile, nextName);
+    handleFileRenamed(selectedFile, nextName);
+    setCommandPaletteOpen(false);
+  }, [renameFile, selectedFile]);
+
+  const applyTemplate = useCallback((templateId: string) => {
+    const template = TEMPLATE_SNIPPETS.find((item) => item.id === templateId);
+    if (!template) return;
+    setContent(template.content(toDateStamp()));
+    setIsDirty(true);
+    setCommandPaletteOpen(false);
+  }, []);
+
+  const createDailyNote = useCallback(async () => {
+    const today = toDateStamp();
+    const yesterday = toDateStamp(new Date(Date.now() - 24 * 60 * 60 * 1000));
+    const tomorrow = toDateStamp(new Date(Date.now() + 24 * 60 * 60 * 1000));
+    const filename = `daily/${today}.md`;
+    const dailyTemplate = `# Daily note — ${today}\n\nPrev: [[daily/${yesterday}]]\nNext: [[daily/${tomorrow}]]\n\n## Priorities\n- \n\n## Journal\n- \n`;
+    await createFile(filename, dailyTemplate);
+    setSelectedFile(filename);
+    setCommandPaletteOpen(false);
+  }, [createFile]);
+
+  const openFilePickerFromCommand = useCallback(() => {
+    setCommandQuery('open ');
+    setCommandPaletteOpen(true);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function computeBacklinks() {
+      if (!selectedFile || files.length === 0) {
+        setBacklinks([]);
+        return;
+      }
+
+      const exactLink = `[[${selectedFile}]]`;
+      const noExtLink = `[[${selectedFile.replace(/\.md$/, '')}]]`;
+      const found: string[] = [];
+
+      await Promise.all(
+        files.map(async (file) => {
+          if (file.name === selectedFile) return;
+          try {
+            const res = await fetch(buildFileApiPath(file.name));
+            if (!res.ok) return;
+            const payload = (await res.json()) as { content?: string };
+            const text = payload.content ?? '';
+            if (text.includes(exactLink) || text.includes(noExtLink)) {
+              found.push(file.name);
+            }
+          } catch {
+            // ignore failed backlink fetch
+          }
+        }),
+      );
+
+      if (!cancelled) {
+        found.sort((a, b) => a.localeCompare(b));
+        setBacklinks(found);
+      }
+    }
+
+    void computeBacklinks();
+    return () => {
+      cancelled = true;
+    };
+  }, [files, selectedFile]);
   useEffect(() => {
     if (isOffline || queuedCheckpoints.length === 0) return;
     let cancelled = false;
@@ -499,6 +681,7 @@ export default function EditorPage() {
     await saveWorkingCopy(content);
   }, [content, saveWorkingCopy]);
 
+  // Keyboard shortcuts
   const handleRestoreDraft = useCallback((filename: string) => {
     const nextDraft = recoverableDrafts[filename];
     if (typeof nextDraft !== 'string') return;
@@ -599,14 +782,58 @@ export default function EditorPage() {
   // Ctrl+S to save checkpoint revision
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+      if (capturingShortcutFor) {
         e.preventDefault();
-        if (!isSaving) handleSaveCheckpoint();
+        if (e.key === 'Escape') {
+          setCapturingShortcutFor(null);
+          return;
+        }
+        const nextShortcut = eventToShortcut(e);
+        setShortcuts((prev) => ({ ...prev, [capturingShortcutFor]: nextShortcut }));
+        setCapturingShortcutFor(null);
+        return;
       }
+
+      if (e.key === 'Escape' && commandPaletteOpen) {
+        setCommandPaletteOpen(false);
+        return;
+      }
+
+      const entries = Object.entries(shortcuts);
+      const matched = entries.find(([, shortcut]) => {
+        const parsed = parseShortcut(shortcut);
+        if (!parsed) return false;
+        const keyMatches = e.key.toLowerCase() === parsed.key.toLowerCase();
+        const modMatches = parsed.mod ? (e.metaKey || e.ctrlKey) : !(e.metaKey || e.ctrlKey);
+        return keyMatches
+          && modMatches
+          && e.shiftKey === parsed.shift
+          && e.altKey === parsed.alt;
+      });
+      if (!matched) return;
+
+      const [action] = matched;
+      e.preventDefault();
+      if (action === 'saveCheckpoint' && !isSaving) handleSaveCheckpoint();
+      if (action === 'commandPalette') setCommandPaletteOpen(true);
+      if (action === 'createFile') void createNewFile();
+      if (action === 'openFilePalette') openFilePickerFromCommand();
+      if (action === 'renameFile') void renameCurrentFile();
+      if (action === 'createDailyNote') void createDailyNote();
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [handleSaveCheckpoint, isSaving]);
+  }, [
+    capturingShortcutFor,
+    commandPaletteOpen,
+    createDailyNote,
+    createNewFile,
+    handleSaveCheckpoint,
+    isSaving,
+    openFilePickerFromCommand,
+    renameCurrentFile,
+    shortcuts,
+  ]);
 
   async function handleFileSelect(filename: string) {
     // Persist current edits to local working-draft buffer before switching files.
@@ -668,81 +895,90 @@ export default function EditorPage() {
   }
 
   const lastCheckpointAt = selectedFile ? lastCheckpointAtByFile[selectedFile] ?? null : null;
-  const revisionSummaries = useMemo(() => {
-    const summaries: Record<string, RevisionSummary> = {};
-    revisions.forEach((revision, idx) => {
-      summaries[revision.id] = computeRevisionSummary(revisions[idx - 1], revision);
-    });
-    return summaries;
-  }, [revisions]);
-  const selectedRevisions = useMemo(
-    () => selectedRevisionIds.map((id) => revisions.find((revision) => revision.id === id)).filter(Boolean) as Revision[],
-    [revisions, selectedRevisionIds],
-  );
-  const comparisonA = selectedRevisions[0] ?? null;
-  const comparisonB = selectedRevisions[1] ?? null;
-  const activeRevision = useMemo(
-    () => (activeRevisionId ? revisions.find((revision) => revision.id === activeRevisionId) ?? null : null),
-    [activeRevisionId, revisions],
-  );
+  const normalizedQuery = commandQuery.trim().toLowerCase();
+  const openPrefix = normalizedQuery.startsWith('open ');
+  const openTerm = openPrefix ? normalizedQuery.slice(5).trim() : '';
+  const fileMatches = files
+    .filter((file) => {
+      if (!openPrefix) return true;
+      return file.name.toLowerCase().includes(openTerm);
+    })
+    .slice(0, 10);
 
-  const restoreAsDraft = useCallback((revision: Revision) => {
-    if (!selectedFile) return;
-    setContent(revision.content);
-    setRevisionNote(revision.note ?? '');
-    setStatus(revision.status ?? '');
-    setTagsInput((revision.tags ?? []).join(', '));
-    setWorkingDraftByFile((prev) => ({ ...prev, [selectedFile]: revision.content }));
-    setIsDirty(true);
-  }, [selectedFile]);
-
-  const restoreAsCheckpoint = useCallback(async (revision: Revision) => {
-    if (!selectedFile) return;
-    const restoredAt = new Date().toLocaleString();
-    await saveContent(revision.content, {
-      note: `Restored checkpoint from ${new Date(revision.createdAt).toLocaleString()} at ${restoredAt}`,
-      tags: revision.tags ?? [],
-      status: revision.status,
-    });
-    setTimelineError(null);
-    setLastCheckpointAtByFile((prev) => ({
-      ...prev,
-      [selectedFile]: new Date().toISOString(),
-    }));
-    setIsDirty(false);
-  }, [saveContent, selectedFile]);
-
-  const handleAddInlineNote = useCallback(async () => {
-    if (!activeRevision || !inlineNoteMessage.trim()) return;
-    try {
-      const nextNotes: RevisionInlineNote[] = [
-        ...(activeRevision.inlineNotes ?? []),
-        {
-          id: crypto.randomUUID(),
-          message: inlineNoteMessage.trim(),
-          lineNumber: inlineNoteLine ? Number(inlineNoteLine) : null,
-          createdAt: new Date().toISOString(),
+  const commandItems = useMemo<CommandItem[]>(() => {
+    const base: CommandItem[] = [
+      {
+        id: 'save',
+        title: 'Save checkpoint',
+        keywords: ['save'],
+        run: () => handleSaveCheckpoint(),
+      },
+      {
+        id: 'create',
+        title: 'Create file',
+        keywords: ['new'],
+        run: () => createNewFile(),
+      },
+      {
+        id: 'rename',
+        title: 'Rename current file',
+        keywords: ['rename'],
+        run: () => renameCurrentFile(),
+      },
+      {
+        id: 'daily-note',
+        title: 'Create daily note',
+        keywords: ['journal', 'today'],
+        run: () => createDailyNote(),
+      },
+      {
+        id: 'shortcuts',
+        title: 'Customize keyboard shortcuts',
+        keywords: ['hotkeys', 'keys'],
+        run: () => {
+          setShortcutEditorOpen(true);
+          setCommandPaletteOpen(false);
         },
-      ];
-      await updateRevisionInlineNotes(activeRevision.id, nextNotes);
-      setInlineNoteMessage('');
-      setInlineNoteLine('');
-      setTimelineError(null);
-    } catch (error) {
-      setTimelineError(error instanceof Error ? error.message : 'Could not add inline note');
-    }
-  }, [activeRevision, inlineNoteLine, inlineNoteMessage, updateRevisionInlineNotes]);
+      },
+    ];
 
-  function toggleRevisionSelection(revisionId: string) {
-    setSelectedRevisionIds((prev) => {
-      if (prev.includes(revisionId)) {
-        return prev.filter((id) => id !== revisionId);
-      }
-      return [...prev, revisionId].slice(-2);
+    TEMPLATE_SNIPPETS.forEach((template) => {
+      base.push({
+        id: `template-${template.id}`,
+        title: `Insert template: ${template.title}`,
+        keywords: ['template', 'snippet'],
+        run: () => applyTemplate(template.id),
+      });
     });
-    setActiveRevisionId(revisionId);
-  }
 
+    fileMatches.forEach((file) => {
+      base.push({
+        id: `open-${file.name}`,
+        title: `Open: ${file.name}`,
+        keywords: ['open', 'file'],
+        run: () => {
+          void handleFileSelect(file.name);
+          setCommandPaletteOpen(false);
+          setCommandQuery('');
+        },
+      });
+    });
+
+    if (!normalizedQuery) return base;
+    return base.filter((command) => {
+      const haystack = [command.title, ...(command.keywords ?? [])].join(' ').toLowerCase();
+      return haystack.includes(normalizedQuery);
+    });
+  }, [
+    applyTemplate,
+    createDailyNote,
+    createNewFile,
+    fileMatches,
+    handleFileSelect,
+    handleSaveCheckpoint,
+    normalizedQuery,
+    renameCurrentFile,
+  ]);
   function applyStatusPipelineInput() {
     const next = statusPipelineInput
       .split(/->|→/)
@@ -1043,35 +1279,69 @@ export default function EditorPage() {
                   ))
                 )}
 
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400 pt-3">
-                  Published history
-                </h3>
-                {publishHistory.length === 0 ? (
-                  <p className="text-xs text-gray-500">No publish runs yet.</p>
-                ) : (
-                  publishHistory.map((entry) => (
-                    <div key={entry.id} className="w-full text-left p-2 rounded border border-gray-700 bg-gray-900">
-                      <p className="text-[11px] text-gray-500">{new Date(entry.createdAt).toLocaleString()}</p>
-                      <p className="text-xs text-gray-200 mt-1">{entry.outcome}</p>
-                      <div className="mt-2 flex items-center justify-between gap-2">
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-700 text-gray-200">{entry.profileId}</span>
+                <div className="mt-4 border-t border-gray-700 pt-3 space-y-2">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Backlinks</h3>
+                  {selectedFile ? (
+                    backlinks.length === 0 ? (
+                      <p className="text-xs text-gray-500">No backlinks yet. Add references like [[{selectedFile.replace(/\.md$/, '')}]].</p>
+                    ) : (
+                      backlinks.map((file) => (
                         <button
-                          onClick={() => handleRollback(entry.id)}
-                          disabled={isPublishing}
-                          className="text-[10px] px-1.5 py-0.5 rounded bg-amber-600 hover:bg-amber-500 disabled:bg-gray-700 disabled:text-gray-500 text-white"
+                          key={file}
+                          onClick={() => void handleFileSelect(file)}
+                          className="w-full text-left text-xs px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-200"
                         >
-                          Rollback
+                          {file}
                         </button>
-                      </div>
-                    </div>
-                  ))
-                )}
+                      ))
+                    )
+                  ) : (
+                    <p className="text-xs text-gray-500">Select a file to see backlinks.</p>
+                  )}
+                </div>
               </div>
             </aside>
           </div>
         )}
       </div>
 
+      {commandPaletteOpen && (
+        <div className="fixed inset-0 z-40 bg-black/60 flex items-start justify-center pt-24 px-4">
+          <div className="w-full max-w-2xl bg-gray-900 border border-gray-700 rounded-lg shadow-xl overflow-hidden">
+            <input
+              ref={commandInputRef}
+              value={commandQuery}
+              onChange={(e) => setCommandQuery(e.target.value)}
+              placeholder="Type a command... (try `open foo`)"
+              className="w-full bg-gray-900 px-4 py-3 text-sm border-b border-gray-700 outline-none"
+            />
+            <div className="max-h-80 overflow-y-auto p-2 space-y-1">
+              {commandItems.length === 0 ? (
+                <p className="text-xs text-gray-500 px-2 py-3">No matching commands.</p>
+              ) : (
+                commandItems.map((command) => (
+                  <button
+                    key={command.id}
+                    onClick={() => void command.run()}
+                    className="w-full text-left text-sm px-3 py-2 rounded hover:bg-gray-800 text-gray-100"
+                  >
+                    {command.title}
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {shortcutEditorOpen && (
+        <div className="fixed inset-0 z-40 bg-black/70 flex items-center justify-center p-4">
+          <div className="w-full max-w-xl bg-gray-900 border border-gray-700 rounded-lg p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-gray-100">Keyboard shortcuts</h3>
+              <button
+                onClick={() => setShortcutEditorOpen(false)}
+                className="text-xs px-2 py-1 rounded bg-gray-800 hover:bg-gray-700"
       {showRecoveryPanel && (
         <div className="fixed inset-0 z-40 bg-black/55 flex items-center justify-center p-4">
           <div className="w-full max-w-2xl bg-gray-900 border border-gray-700 rounded-lg shadow-xl">
@@ -1084,6 +1354,26 @@ export default function EditorPage() {
                 Close
               </button>
             </div>
+            <div className="space-y-2">
+              {Object.entries(SHORTCUT_LABELS).map(([key, label]) => (
+                <div key={key} className="flex items-center justify-between gap-3 bg-gray-800/60 rounded px-3 py-2">
+                  <span className="text-xs text-gray-200">{label}</span>
+                  <button
+                    onClick={() => setCapturingShortcutFor(key)}
+                    className="text-xs font-mono px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 min-w-28"
+                  >
+                    {capturingShortcutFor === key ? 'Press keys...' : shortcuts[key]}
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={() => setShortcuts(DEFAULT_SHORTCUTS)}
+              className="mt-3 text-xs px-2 py-1 rounded bg-gray-800 hover:bg-gray-700"
+            >
+              Reset defaults
+            </button>
+          </div>
             <div className="p-4 space-y-2 max-h-[70vh] overflow-y-auto">
               {Object.keys(recoverableDrafts).length === 0 ? (
                 <p className="text-xs text-gray-400">No recoverable drafts found from previous sessions.</p>
