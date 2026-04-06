@@ -77,6 +77,17 @@ export default function EditorPage() {
     }
   }, [loadedContent, revisions, selectedFile, workingDraftByFile]);
 
+  // Keep editor content in sync once async file content loads, but never clobber unsaved edits.
+  useEffect(() => {
+    if (!selectedFile) return;
+    if (isDirty) return;
+
+    const draft = workingDraftByFile[selectedFile];
+    if (typeof draft === 'string') return;
+
+    setContent(loadedContent);
+  }, [isDirty, loadedContent, selectedFile, workingDraftByFile]);
+
   const { isSaving, saveNow } = useAutoSave({
     content,
     filename: selectedFile,

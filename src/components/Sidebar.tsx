@@ -57,13 +57,6 @@ function formatDate(value: string | undefined): string {
 }
 
 // Helper function: keeps a small, testable transformation isolated from UI side effects.
-function formatSize(size: number): string {
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-// Helper function: keeps a small, testable transformation isolated from UI side effects.
 function makeUploadFilename(originalName: string, takenNames: Set<string>): string {
   const source = originalName.includes('.') ? originalName.replace(/\.[^.]*$/, '') : originalName;
   const sanitizedBase = source.replace(/[^a-zA-Z0-9_\-. ]/g, '_').trim() || 'upload';
@@ -796,7 +789,6 @@ export default function Sidebar({
                                   <div className="mt-1 text-[11px] text-gray-400 space-y-0.5">
                                     <div className="flex gap-2">
                                       <span>Created: {formatDate(revision.file.ctime ?? revision.file.mtime)}</span>
-                                      <span>Size: {formatSize(revision.file.size)}</span>
                                     </div>
                                     {revision.meta.note && <div className="truncate">{revision.meta.note}</div>}
                                     {revision.meta.tags.length > 0 && (
