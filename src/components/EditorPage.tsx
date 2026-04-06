@@ -9,7 +9,7 @@ import CompareView from './CompareView';
 import DiffView from './DiffView';
 import { useFileContent } from '@/hooks/useFileContent';
 import { useAutoSave } from '@/hooks/useAutoSave';
-import { Revision, RevisionStatus } from '@/types';
+import { Revision, RevisionInlineNote, RevisionStatus } from '@/types';
 import { useFiles } from '@/hooks/useFiles';
 import { buildFileApiPath } from '@/lib/fileApiPath';
 
