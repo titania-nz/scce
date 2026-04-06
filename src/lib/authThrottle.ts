@@ -1,176 +1,69 @@
-import { createHash } from 'crypto';
-import { NextRequest } from 'next/server';
-import { getStore } from '@netlify/blobs';
-import { isNetlifyRuntime } from '@/lib/netlifyRuntime';
-export { createAuthToken, verifyAuthToken } from '@/lib/authToken';
-
-interface ThrottleBucket {
-  count: number;
-  resetAt: number;
-}
-
-interface PrincipalThrottleStatus {
-  blocked: boolean;
+interface AuthThrottleStatus {
+  allowed: boolean;
   retryAfterSeconds: number;
 }
 
-const THROTTLE_STORE = 'auth-throttle';
-const DEFAULT_WINDOW_SECONDS = 5 * 60;
-const DEFAULT_MAX_ATTEMPTS = 8;
-const MEMORY_BUCKETS = new Map<string, ThrottleBucket>();
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
+interface AuthAttemptState {
+  failedAttempts: number;
+  blockedUntil: number;
 }
 
-function nowMs(): number {
+const MAX_FAILED_ATTEMPTS = 5;
+const BLOCK_WINDOW_MS = 5 * 60 * 1000;
+
+const attemptsByIp = new Map<string, AuthAttemptState>();
+
+function now(): number {
   return Date.now();
 }
 
-function throttleWindowMs(): number {
-  const configured = Number(process.env.AUTH_THROTTLE_WINDOW_SECONDS);
-  if (Number.isFinite(configured) && configured > 0) {
-    return configured * 1_000;
-  }
-  return DEFAULT_WINDOW_SECONDS * 1_000;
-}
-
-function maxAttempts(): number {
-  const configured = Number(process.env.AUTH_THROTTLE_MAX_ATTEMPTS);
-  if (Number.isFinite(configured) && configured > 0) {
-    return configured;
-  }
-  return DEFAULT_MAX_ATTEMPTS;
-}
-
-function shouldIncludeUserAgentDimension(): boolean {
-  return process.env.AUTH_THROTTLE_INCLUDE_IP_UA !== 'false';
-}
-
-function throttleKeyForIp(ip: string): string {
-  return `ip:${ip}`;
-}
-
-function throttleKeyForIpAndUa(ip: string, userAgent: string): string {
-  const digest = createHash('sha256').update(userAgent).digest('hex').slice(0, 16);
-  return `ipua:${ip}:${digest}`;
-}
-
-function normalizeBucket(bucket: ThrottleBucket | null, timestamp: number): ThrottleBucket {
-  const windowMs = throttleWindowMs();
-  if (!bucket || timestamp >= bucket.resetAt) {
-    return {
-      count: 0,
-      resetAt: timestamp + windowMs,
-    };
-  }
-  return bucket;
-}
-
-async function readStoreBucket(key: string): Promise<ThrottleBucket | null> {
-  const store = getStore(THROTTLE_STORE);
-  const data = await store.get(key, { type: 'json' });
-  if (!data || typeof data !== 'object') return null;
-
-  const parsed = data as Partial<ThrottleBucket>;
-  const count = parsed.count;
-  const resetAt = parsed.resetAt;
-  if (!isFiniteNumber(count) || !isFiniteNumber(resetAt)) return null;
-
-  return {
-    count,
-    resetAt,
-  };
-}
-
-async function writeStoreBucket(key: string, bucket: ThrottleBucket): Promise<void> {
-  const store = getStore(THROTTLE_STORE);
-  await store.setJSON(key, bucket);
-}
-
-async function readBucket(key: string): Promise<ThrottleBucket | null> {
-  if (isNetlifyRuntime) {
-    return readStoreBucket(key);
-  }
-  return MEMORY_BUCKETS.get(key) ?? null;
-}
-
-async function writeBucket(key: string, bucket: ThrottleBucket): Promise<void> {
-  if (isNetlifyRuntime) {
-    await writeStoreBucket(key, bucket);
-    return;
-  }
-  MEMORY_BUCKETS.set(key, bucket);
-}
-
-async function inspectPrincipalThrottle(key: string): Promise<PrincipalThrottleStatus> {
-  const current = normalizeBucket(await readBucket(key), nowMs());
-  const allowedAttempts = maxAttempts();
-
-  if (current.count >= allowedAttempts) {
-    const retryAfterSeconds = Math.max(1, Math.ceil((current.resetAt - nowMs()) / 1_000));
-    return {
-      blocked: true,
-      retryAfterSeconds,
-    };
-  }
-
-  return {
-    blocked: false,
-    retryAfterSeconds: 0,
-  };
-}
-
-async function incrementPrincipalThrottle(key: string): Promise<void> {
-  const timestamp = nowMs();
-  const current = normalizeBucket(await readBucket(key), timestamp);
-  current.count += 1;
-  await writeBucket(key, current);
-}
-
-function getClientIp(request: NextRequest): string {
+function getClientIp(request: Request): string {
   const forwardedFor = request.headers.get('x-forwarded-for');
   if (forwardedFor) {
-    return forwardedFor.split(',')[0]?.trim() ?? 'unknown';
+    return forwardedFor.split(',')[0]?.trim() || 'unknown';
   }
 
-  const forwardedIpHeaders = ['x-real-ip', 'cf-connecting-ip', 'x-nf-client-connection-ip'];
-  for (const header of forwardedIpHeaders) {
-    const value = request.headers.get(header);
-    if (value) return value.trim();
-  }
+  const realIp = request.headers.get('x-real-ip');
+  if (realIp) return realIp.trim();
 
   return 'unknown';
 }
 
-function getThrottleKeys(request: NextRequest): string[] {
+// Public hook/helper: called from UI code to encapsulate shared stateful behavior.
+export function getAuthThrottleStatus(request: Request): AuthThrottleStatus {
   const ip = getClientIp(request);
-  const keys = [throttleKeyForIp(ip)];
-
-  if (shouldIncludeUserAgentDimension()) {
-    const userAgent = request.headers.get('user-agent');
-    if (userAgent) {
-      keys.push(throttleKeyForIpAndUa(ip, userAgent));
-    }
+  const state = attemptsByIp.get(ip);
+  if (!state) {
+    return { allowed: true, retryAfterSeconds: 0 };
   }
 
-  return keys;
-}
-
-export async function getAuthThrottleStatus(request: NextRequest): Promise<PrincipalThrottleStatus> {
-  const keys = getThrottleKeys(request);
-  const statuses = await Promise.all(keys.map((key) => inspectPrincipalThrottle(key)));
-
-  for (const status of statuses) {
-    if (status.blocked) {
-      return status;
-    }
+  const now = nowMs();
+  if (state.blockedUntil <= now) {
+    attemptsByIp.delete(ip);
+    return { allowed: true, retryAfterSeconds: 0 };
   }
 
-  return { blocked: false, retryAfterSeconds: 0 };
+  return {
+    allowed: false,
+    retryAfterSeconds: Math.ceil((state.blockedUntil - now) / 1000),
+  };
 }
 
-export async function recordAuthFailure(request: NextRequest): Promise<void> {
-  const keys = getThrottleKeys(request);
-  await Promise.all(keys.map((key) => incrementPrincipalThrottle(key)));
+// Public hook/helper: called from UI code to encapsulate shared stateful behavior.
+export function recordAuthFailure(request: Request): void {
+  const ip = getClientIp(request);
+  const state = attemptsByIp.get(ip) ?? { failedAttempts: 0, blockedUntil: 0 };
+
+  const failedAttempts = state.failedAttempts + 1;
+  const shouldBlock = failedAttempts >= MAX_FAILED_ATTEMPTS;
+
+  attemptsByIp.set(ip, {
+    failedAttempts: shouldBlock ? 0 : failedAttempts,
+    blockedUntil: shouldBlock ? nowMs() + BLOCK_WINDOW_MS : 0,
+  });
+}
+
+// Public hook/helper: called from UI code to encapsulate shared stateful behavior.
+export function createAuthToken(secret: string): string {
+  return secret;
 }

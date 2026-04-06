@@ -1,12 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { COOKIE_NAME, COOKIE_OPTIONS } from './cookie';
-import { getAuthThrottleStatus, recordAuthFailure } from '@/lib/authThrottle';
-import { createAuthToken } from '@/lib/authToken';
-
-const GENERIC_AUTH_ERROR = 'Invalid credentials';
+import { createAuthToken, getAuthThrottleStatus, recordAuthFailure } from '@/lib/authThrottle';
 
 // API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function POST(request: NextRequest) {
+  const throttle = getAuthThrottleStatus(request);
+  if (!throttle.allowed) {
+    return NextResponse.json(
+      { error: `Too many attempts. Try again in ${throttle.retryAfterSeconds}s.` },
+      { status: 429 },
+    );
+  }
+
   // Login
   const body = await request.json().catch(() => ({}));
   const { password } = body as { password?: string };
@@ -18,28 +23,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Server not configured' }, { status: 503 });
   }
 
-  const throttleStatus = await getAuthThrottleStatus(request);
-  if (throttleStatus.blocked) {
-    return NextResponse.json(
-      {
-        error: GENERIC_AUTH_ERROR,
-        retryAfterSeconds: throttleStatus.retryAfterSeconds,
-      },
-      {
-        status: 429,
-        headers: {
-          'Retry-After': String(throttleStatus.retryAfterSeconds),
-        },
-      },
-    );
-  }
-
   if (!password || password !== authPassword) {
-    await recordAuthFailure(request);
-    return NextResponse.json({ error: GENERIC_AUTH_ERROR }, { status: 401 });
+    recordAuthFailure(request);
+    return NextResponse.json({ error: 'Incorrect password' }, { status: 401 });
   }
 
-  const token = await createAuthToken(authSecret);
+  const token = createAuthToken(authSecret);
   const response = NextResponse.json({ ok: true });
   response.cookies.set(COOKIE_NAME, token, COOKIE_OPTIONS);
   return response;

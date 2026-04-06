@@ -50,6 +50,7 @@ export interface RevisionNote {
   id: string;
   message: string;
   createdAt: string;
+  parentId?: string;
 }
 
 export interface RevisionPresence {
@@ -166,6 +167,29 @@ export interface CreateRevisionInput {
   collaboration?: Partial<CollaborationState>;
 }
 
+
+export type DocumentBranchName = 'draft' | 'accepted' | 'canonical';
+
+export interface DocumentMilestone {
+  id: string;
+  revisionId: string;
+  label: string;
+  createdAt: string;
+}
+
+export interface DocumentBranchState {
+  draftRevisionId: string | null;
+  acceptedRevisionId: string | null;
+  canonicalRevisionId: string | null;
+  milestones: DocumentMilestone[];
+}
+
+export interface DocumentDashboardEntry {
+  document: Document;
+  revisions: DocumentRevision[];
+  branches: DocumentBranchState;
+}
+
 export interface ApiError {
   error: string;
 }
@@ -180,4 +204,35 @@ export interface FileRevisionsResponse {
   name: string;
   currentDraftRevisionId: string | null;
   revisions: RevisionEntry[];
+}
+
+
+export type ExportFormat = 'html' | 'pdf' | 'docx';
+
+export type PublishTargetType = 'docs-site' | 'cms-webhook' | 'git-commit';
+
+export interface PublishTargetProfile {
+  id: string;
+  label: string;
+  type: PublishTargetType;
+  description: string;
+}
+
+export interface PublishHistoryEntry {
+  id: string;
+  createdAt: string;
+  profileId: string;
+  profileType: PublishTargetType;
+  revisionId: string | null;
+  outcome: string;
+  contentSnapshot: string;
+}
+
+export interface PublishHistoryResponse {
+  name: string;
+  canPublish: boolean;
+  latestRevisionId: string | null;
+  latestRevisionStatus?: RevisionStatus;
+  profiles: PublishTargetProfile[];
+  history: PublishHistoryEntry[];
 }
