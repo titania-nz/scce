@@ -322,8 +322,8 @@ export function getNotesDir(): string {
   if (isNetlifyRuntime) {
     return '';
   }
-  const dir = process.env.NOTES_DIR ?? path.join(process.cwd(), 'notes');
-  fs.mkdirSync(dir, { recursive: true });
+  const dir = process.env.NOTES_DIR ?? './notes';
+  /*turbopackIgnore: true*/ fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
 
