@@ -3,6 +3,8 @@
 import { useMemo, useState } from 'react';
 import { useFiles } from '@/hooks/useFiles';
 import { useFileContent } from '@/hooks/useFileContent';
+import { buildFileApiPath } from '@/lib/fileApiPath';
+import { RevisionStatus } from '@/types';
 import DiffView from './DiffView';
 
 interface CompareViewProps {
@@ -12,14 +14,32 @@ interface CompareViewProps {
 
 // Main component export: this is the entry point rendered by parent routes/components.
 export default function CompareView({ selectedFile = null, onFileSelect }: CompareViewProps) {
-  const { files } = useFiles();
+  const { files, mutate: mutateFiles } = useFiles();
   const [selectedA, setSelectedA] = useState<string | null>(selectedFile);
   const [selectedB, setSelectedB] = useState<string | null>(null);
   const [revisionA, setRevisionA] = useState<string>('latest');
   const [revisionB, setRevisionB] = useState<string>('latest');
+  const [destination, setDestination] = useState<'overwrite-a' | 'overwrite-b' | 'new-path'>('overwrite-a');
+  const [newFilePath, setNewFilePath] = useState('');
+  const [isFinalizing, setIsFinalizing] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
+  const [mergeNote, setMergeNote] = useState('');
+  const [mergeTagsInput, setMergeTagsInput] = useState('');
+  const [mergeStatus, setMergeStatus] = useState<RevisionStatus | ''>('');
 
-  const { content: contentA, revisions: revisionsA, isLoading: loadingA } = useFileContent(selectedA);
-  const { content: contentB, revisions: revisionsB, isLoading: loadingB } = useFileContent(selectedB);
+  const {
+    content: contentA,
+    revisions: revisionsA,
+    isLoading: loadingA,
+    saveContent: saveA,
+  } = useFileContent(selectedA);
+  const {
+    content: contentB,
+    revisions: revisionsB,
+    isLoading: loadingB,
+    saveContent: saveB,
+  } = useFileContent(selectedB);
 
   const bothSelected = selectedA && selectedB;
   const isLoading = loadingA || loadingB;
@@ -38,9 +58,67 @@ export default function CompareView({ selectedFile = null, onFileSelect }: Compa
 
   const effectiveContentA = selectedRevisionA?.content ?? contentA;
   const effectiveContentB = selectedRevisionB?.content ?? contentB;
+  const parsedMergeTags = useMemo(
+    () => mergeTagsInput.split(',').map((tag) => tag.trim()).filter(Boolean),
+    [mergeTagsInput],
+  );
 
   const headerA = selectedRevisionA?.note ? `${selectedA} - ${selectedRevisionA.note}` : selectedA ?? '';
   const headerB = selectedRevisionB?.note ? `${selectedB} - ${selectedRevisionB.note}` : selectedB ?? '';
+  const targetFilename = destination === 'overwrite-a'
+    ? selectedA
+    : destination === 'overwrite-b'
+      ? selectedB
+      : (newFilePath.trim() || null);
+  const isFinalizeDisabled = !bothSelected
+    || isLoading
+    || isFinalizing
+    || !targetFilename
+    || (destination === 'overwrite-a' && !selectedA)
+    || (destination === 'overwrite-b' && !selectedB);
+
+  async function handleFinalize(): Promise<void> {
+    if (!selectedA || !selectedB || !targetFilename) return;
+    setIsFinalizing(true);
+    setSaveError(null);
+    setSaveSuccess(null);
+
+    const timestamp = new Date().toISOString();
+    const note = (mergeNote.trim() || `Merged from A/B compare on ${timestamp}`);
+    const metadata = {
+      note,
+      tags: parsedMergeTags,
+      status: mergeStatus || undefined,
+    };
+
+    try {
+      if (destination === 'overwrite-a') {
+        await saveA(effectiveContentB, metadata);
+      } else if (destination === 'overwrite-b') {
+        await saveB(effectiveContentA, metadata);
+      } else {
+        const response = await fetch(buildFileApiPath(targetFilename), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            content: effectiveContentB,
+            ...metadata,
+          }),
+        });
+        if (!response.ok) {
+          const err = await response.json();
+          throw new Error(err.error ?? 'Could not save merged file');
+        }
+      }
+
+      await mutateFiles();
+      setSaveSuccess(`Merge saved to ${targetFilename}.`);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Could not finalize merge');
+    } finally {
+      setIsFinalizing(false);
+    }
+  }
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -107,6 +185,63 @@ export default function CompareView({ selectedFile = null, onFileSelect }: Compa
             ))}
           </select>
         </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold text-gray-400 shrink-0">Destination</span>
+          <select
+            value={destination}
+            onChange={(e) => {
+              setDestination(e.target.value as 'overwrite-a' | 'overwrite-b' | 'new-path');
+              setSaveError(null);
+              setSaveSuccess(null);
+            }}
+            className={`${selectClass} max-w-64`}
+          >
+            <option value="overwrite-a">Overwrite file A</option>
+            <option value="overwrite-b">Overwrite file B</option>
+            <option value="new-path">Save as new file path</option>
+          </select>
+
+          {destination === 'new-path' && (
+            <input
+              className={`${selectClass} min-w-64`}
+              value={newFilePath}
+              onChange={(e) => setNewFilePath(e.target.value)}
+              placeholder="docs/merged-result.md"
+            />
+          )}
+        </div>
+
+        <div className="grid gap-2 sm:grid-cols-3">
+          <input
+            className={selectClass}
+            value={mergeNote}
+            onChange={(e) => setMergeNote(e.target.value)}
+            placeholder="Revision note (optional)"
+          />
+          <input
+            className={selectClass}
+            value={mergeTagsInput}
+            onChange={(e) => setMergeTagsInput(e.target.value)}
+            placeholder="Tags (optional, comma-separated)"
+          />
+          <select
+            className={selectClass}
+            value={mergeStatus}
+            onChange={(e) => setMergeStatus((e.target.value as RevisionStatus) || '')}
+          >
+            <option value="">No status</option>
+            <option value="accepted">Accepted</option>
+            <option value="rejected">Rejected</option>
+            <option value="needs-review">Needs review</option>
+          </select>
+        </div>
+
+        {(saveSuccess || saveError) && (
+          <div className={`text-xs ${saveError ? 'text-red-400' : 'text-green-400'}`}>
+            {saveError ?? saveSuccess}
+          </div>
+        )}
       </div>
 
       {!bothSelected ? (
@@ -123,6 +258,10 @@ export default function CompareView({ selectedFile = null, onFileSelect }: Compa
           contentB={effectiveContentB}
           filenameA={headerA}
           filenameB={headerB}
+          actionLabel={isFinalizing ? 'Finalizing...' : 'Finalize merge'}
+          actionHint="Save merge result to the selected destination"
+          actionDisabled={isFinalizeDisabled}
+          onAction={handleFinalize}
         />
       )}
     </div>
