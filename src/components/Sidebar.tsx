@@ -254,6 +254,7 @@ export default function Sidebar({
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [savedFilters, setSavedFilters] = useState<Array<{ id: string; name: string; filter: any }>>([]);
 
   function getCurrentWeekRange() {
     const now = new Date();
@@ -267,6 +268,10 @@ export default function Sidebar({
       from: startOfWeek.toISOString().split('T')[0],
       to: endOfWeek.toISOString().split('T')[0],
     };
+  }
+
+  function saveCurrentFilter() {
+    // TODO: implement saving current filter
   }
 
   useEffect(() => {
@@ -770,7 +775,7 @@ export default function Sidebar({
               <div key={filter.id} className="inline-flex items-center rounded border border-gray-600 overflow-hidden">
                 <button
                   type="button"
-                  onClick={() => applyFilter(filter)}
+                  onClick={() => applyFilter(filter.filter)}
                   className="text-[11px] px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-100"
                 >
                   {filter.name}
