@@ -3,8 +3,9 @@
 import useSWR from 'swr';
 import { FileContentResponse, Revision, RevisionStatus } from '@/types';
 import { buildFileApiPath, buildFileDraftApiPath } from '@/lib/fileApiPath';
+import { fetchJson } from '@/lib/fetchJson';
 
-const fetcher = (url: string) => fetch(url).then((r) => r.json());
+const fetcher = (url: string) => fetchJson<FileContentResponse>(url, 'Could not load file content');
 
 interface SaveContentOptions {
   note?: string;

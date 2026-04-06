@@ -460,10 +460,6 @@ export async function listFiles(): Promise<FileEntry[]> {
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
 
-    for (const file of files) {
-      await migrateLegacyFileToInitialRevision(file.name);
-    }
-
     return files;
   }
 
@@ -500,27 +496,11 @@ export async function listFiles(): Promise<FileEntry[]> {
 
   walk();
 
-  const sortedFiles = files
-    .sort((a, b) => a.name.localeCompare(b.name));
-
-  for (const file of sortedFiles) {
-    await migrateLegacyFileToInitialRevision(file.name);
-  }
-
-  return sortedFiles;
+  return files.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 // API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function readFile(filename: string): Promise<string> {
-  await migrateLegacyFileToInitialRevision(filename);
-
-  const documentId = legacyFilenameToDocumentId(filename);
-  const revisions = await listRevisionsByDocumentId(documentId);
-  const latest = revisions[revisions.length - 1];
-  if (latest) {
-    return latest.content;
-  }
-
   const key = resolveSafePath(filename);
   if (isNetlifyRuntime) {
     const store = getBlobStore();
@@ -543,8 +523,6 @@ export async function readFile(filename: string): Promise<string> {
 
 // API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function writeFile(filename: string, content: string): Promise<void> {
-  await migrateLegacyFileToInitialRevision(filename);
-
   const key = resolveSafePath(filename);
   if (isNetlifyRuntime) {
     const store = getBlobStore();
@@ -558,26 +536,6 @@ export async function writeFile(filename: string, content: string): Promise<void
     fs.renameSync(tmpPath, filePath);
   }
 
-  const documentId = legacyFilenameToDocumentId(filename);
-  if (!(await documentExists(documentId))) {
-    await createDocumentRootRecord({
-      id: documentId,
-      name: filename,
-      sourceFilename: filename,
-    });
-  }
-
-  const writeTimestamp = nowIso();
-  await appendImmutableRevision(documentId, {
-    content,
-    notes: [
-      {
-        id: generateRevisionId(writeTimestamp),
-        message: 'Created from file API write',
-        createdAt: writeTimestamp,
-      },
-    ],
-  });
 }
 
 async function removeRevisionData(filename: string): Promise<void> {
@@ -757,9 +715,6 @@ export async function createRevision(
   };
 
   await writeRevisionMeta(filename, nextMeta);
-  if (setAsDraft) {
-    await writeFile(filename, content);
-  }
 
   return revision;
 }
