@@ -87,13 +87,14 @@ export default function EditorPage() {
     content,
     filename: selectedFile,
     isDirty,
-    saveFn: async (c) => {
-      await saveContent(c, { note: revisionNote, tags: parsedTags, status: status || undefined });
-    },
     saveWorkingCopyFn: saveWorkingCopy,
     saveCheckpointFn: async (checkpointContent) => {
       if (!selectedFile) return;
-      await saveContent(checkpointContent);
+      await saveContent(checkpointContent, {
+        note: revisionNote,
+        tags: parsedTags,
+        status: status || undefined,
+      });
       setWorkingDraftByFile((prev) => {
         const next = { ...prev };
         delete next[selectedFile];
