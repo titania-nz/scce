@@ -9,7 +9,7 @@ export interface FileListResponse {
   files: FileEntry[];
 }
 
-export type RevisionStatus = 'accepted' | 'rejected' | 'needs-review';
+export type RevisionStatus = string;
 
 // Per-file UI/API revision metadata
 export interface Revision {

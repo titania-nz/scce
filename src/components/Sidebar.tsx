@@ -38,11 +38,21 @@ interface DocumentGroup {
   chapters: ChapterGroup[];
 }
 
+interface SavedFilter {
+  id: string;
+  name: string;
+  chapterSearch: string;
+  metaSearch: string;
+  dateFrom: string;
+  dateTo: string;
+}
+
 const DEFAULT_META: RevisionMeta = {
   tags: [],
   note: '',
   status: '',
 };
+const SAVED_FILTERS_STORAGE_KEY = 'scce.savedSidebarFilters';
 
 // Helper function: keeps a small, testable transformation isolated from UI side effects.
 function formatDate(value: string | undefined): string {
@@ -233,6 +243,7 @@ export default function Sidebar({
   const [collapsedDocuments, setCollapsedDocuments] = useState<Record<string, boolean>>({});
   const [collapsedChapters, setCollapsedChapters] = useState<Record<string, boolean>>({});
   const [revisionMetaByFile, setRevisionMetaByFile] = useState<Record<string, RevisionMeta>>({});
+  const [savedFilters, setSavedFilters] = useState<SavedFilter[]>([]);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -267,6 +278,23 @@ export default function Sidebar({
       cancelled = true;
     };
   }, [files]);
+
+  useEffect(() => {
+    const raw = window.localStorage.getItem(SAVED_FILTERS_STORAGE_KEY);
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw) as SavedFilter[];
+      if (Array.isArray(parsed)) {
+        setSavedFilters(parsed.filter((filter) => typeof filter?.name === 'string'));
+      }
+    } catch {
+      // noop
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(SAVED_FILTERS_STORAGE_KEY, JSON.stringify(savedFilters));
+  }, [savedFilters]);
 
   const grouped = useMemo<DocumentGroup[]>(() => {
     const items: RevisionItem[] = files.map((file) => {
@@ -514,6 +542,44 @@ export default function Sidebar({
     setCollapsedChapters((prev) => ({ ...prev, [key]: !prev[key] }));
   }
 
+  function applyFilter(filter: Pick<SavedFilter, 'chapterSearch' | 'metaSearch' | 'dateFrom' | 'dateTo'>) {
+    setChapterSearch(filter.chapterSearch);
+    setMetaSearch(filter.metaSearch);
+    setDateFrom(filter.dateFrom);
+    setDateTo(filter.dateTo);
+  }
+
+  function saveCurrentFilter() {
+    const name = window.prompt('Save current filter as:', `Filter ${savedFilters.length + 1}`)?.trim();
+    if (!name) return;
+    setSavedFilters((prev) => [
+      ...prev,
+      {
+        id: crypto.randomUUID(),
+        name,
+        chapterSearch,
+        metaSearch,
+        dateFrom,
+        dateTo,
+      },
+    ]);
+  }
+
+  function getCurrentWeekRange() {
+    const now = new Date();
+    const day = now.getDay();
+    const mondayOffset = day === 0 ? -6 : 1 - day;
+    const monday = new Date(now);
+    monday.setDate(now.getDate() + mondayOffset);
+    monday.setHours(0, 0, 0, 0);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    return {
+      from: monday.toISOString().slice(0, 10),
+      to: sunday.toISOString().slice(0, 10),
+    };
+  }
+
   return (
     <aside className="flex flex-col h-full bg-gray-900 text-gray-100 w-80 shrink-0 border-r border-gray-800">
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
@@ -582,6 +648,57 @@ export default function Sidebar({
       </div>
 
       <div className="px-3 py-2 border-b border-gray-700 space-y-2">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => applyFilter({ chapterSearch: '', metaSearch: 'needs review', dateFrom: '', dateTo: '' })}
+            className="text-[11px] px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-100"
+          >
+            My review queue
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const { from, to } = getCurrentWeekRange();
+              applyFilter({ chapterSearch: '', metaSearch: 'needs review', dateFrom: from, dateTo: to });
+            }}
+            className="text-[11px] px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-100"
+          >
+            Needs review this week
+          </button>
+          <button
+            type="button"
+            onClick={saveCurrentFilter}
+            className="text-[11px] px-2 py-1 rounded bg-blue-700 hover:bg-blue-600 text-white"
+          >
+            Save current filter
+          </button>
+        </div>
+
+        {savedFilters.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {savedFilters.map((filter) => (
+              <div key={filter.id} className="inline-flex items-center rounded border border-gray-600 overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => applyFilter(filter)}
+                  className="text-[11px] px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-100"
+                >
+                  {filter.name}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSavedFilters((prev) => prev.filter((item) => item.id !== filter.id))}
+                  className="text-[11px] px-1.5 py-1 bg-gray-700 hover:bg-red-700 text-gray-300"
+                  aria-label={`Delete saved filter ${filter.name}`}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <input
           type="text"
           value={chapterSearch}
