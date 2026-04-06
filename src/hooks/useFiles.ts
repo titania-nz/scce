@@ -34,6 +34,19 @@ export function useFiles() {
     await mutate();
   }
 
+  async function deleteFiles(filenames: string[]): Promise<void> {
+    await Promise.all(
+      filenames.map(async (filename) => {
+        const res = await fetch(buildFileApiPath(filename), { method: 'DELETE' });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error ?? `Could not delete ${filename}`);
+        }
+      }),
+    );
+    await mutate();
+  }
+
   async function renameFile(oldName: string, newName: string): Promise<void> {
     const res = await fetch(buildFileApiPath(oldName), {
       method: 'PUT',
@@ -53,6 +66,7 @@ export function useFiles() {
     error,
     createFile,
     deleteFile,
+    deleteFiles,
     renameFile,
     mutate,
   };
