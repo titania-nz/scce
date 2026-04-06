@@ -14,7 +14,7 @@ interface CompareViewProps {
 export default function CompareView({ selectedFile = null, onFileSelect }: CompareViewProps) {
   const { files } = useFiles();
   const [selectedA, setSelectedA] = useState<string | null>(selectedFile);
-  const [selectedB, setSelectedB] = useState<string | null>(selectedFile);
+  const [selectedB, setSelectedB] = useState<string | null>(null);
   const [revisionA, setRevisionA] = useState<string>('latest');
   const [revisionB, setRevisionB] = useState<string>('latest');
 
@@ -84,7 +84,6 @@ export default function CompareView({ selectedFile = null, onFileSelect }: Compa
             onChange={(e) => {
               const next = e.target.value || null;
               setSelectedB(next);
-              onFileSelect?.(next);
               setRevisionB('latest');
             }}
             className={selectClass}

@@ -1,6 +1,5 @@
 import fs from 'fs';
 import path from 'path';
-import { getStore } from '@netlify/blobs';
 import {
   CreateDocumentInput,
   CreateRevisionInput,
@@ -9,6 +8,7 @@ import {
   FileEntry,
   RevisionEntry,
 } from '@/types';
+import { isNetlifyRuntime, getBlobStore } from '@/lib/netlifyRuntime';
 
 const VALID_FILENAME = /^[a-zA-Z0-9_\-. /]+\.md$/;
 const MAX_FILENAME_LENGTH = 255;
@@ -16,11 +16,6 @@ const MAX_FILENAME_LENGTH = 255;
 const DOCUMENTS_DIRNAME = '.documents';
 const DOCUMENT_META_KEY = 'document.json';
 const REVISIONS_DIR = 'revisions';
-
-const isNetlifyRuntime =
-  process.env.NETLIFY === 'true' ||
-  process.env.CONTEXT !== undefined ||
-  process.env.NETLIFY_BLOBS_CONTEXT !== undefined;
 
 interface FileRevisionMeta {
   currentDraftRevisionId: string | null;
@@ -31,13 +26,6 @@ const EMPTY_META: FileRevisionMeta = {
   currentDraftRevisionId: null,
   revisions: [],
 };
-
-function getBlobStore() {
-  if (!isNetlifyRuntime) {
-    return null;
-  }
-  return getStore('files');
-}
 
 function encodeFilenameForPath(filename: string): string {
   return encodeURIComponent(filename);
@@ -579,13 +567,14 @@ export async function writeFile(filename: string, content: string): Promise<void
     });
   }
 
+  const writeTimestamp = nowIso();
   await appendImmutableRevision(documentId, {
     content,
     notes: [
       {
-        id: generateRevisionId(nowIso()),
+        id: generateRevisionId(writeTimestamp),
         message: 'Created from file API write',
-        createdAt: nowIso(),
+        createdAt: writeTimestamp,
       },
     ],
   });
@@ -622,18 +611,36 @@ async function copyRevisionData(oldName: string, newName: string): Promise<void>
   await writeRevisionMeta(newName, meta);
 }
 
+async function removeDocumentData(filename: string): Promise<void> {
+  const documentId = legacyFilenameToDocumentId(filename);
+  if (!(await documentExists(documentId))) return;
+
+  if (isNetlifyRuntime) {
+    const store = getBlobStore();
+    if (!store) return;
+    const prefix = `documents/${documentId}/`;
+    const { blobs } = await store.list({ prefix });
+    await Promise.all(blobs.map((blob) => store.delete(blob.key)));
+    return;
+  }
+
+  const docDir = path.join(getDocumentsDir(), documentId);
+  if (fs.existsSync(docDir)) {
+    fs.rmSync(docDir, { recursive: true, force: true });
+  }
+}
+
 // API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function deleteFile(filename: string): Promise<void> {
   const key = resolveSafePath(filename);
   if (isNetlifyRuntime) {
     const store = getBlobStore();
     if (!store) throw Object.assign(new Error('File not found'), { status: 404 });
-    try {
-      await store.delete(key);
-      await removeRevisionData(filename);
-    } catch {
-      throw Object.assign(new Error('File not found'), { status: 404 });
-    }
+    const existing = await store.get(key);
+    if (!existing) throw Object.assign(new Error('File not found'), { status: 404 });
+    await store.delete(key);
+    await removeRevisionData(filename);
+    await removeDocumentData(filename);
     return;
   }
   const filePath = key;
@@ -642,6 +649,7 @@ export async function deleteFile(filename: string): Promise<void> {
   }
   fs.unlinkSync(filePath);
   await removeRevisionData(filename);
+  await removeDocumentData(filename);
 }
 
 // API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
@@ -651,17 +659,15 @@ export async function renameFile(oldName: string, newName: string): Promise<void
   if (isNetlifyRuntime) {
     const store = getBlobStore();
     if (!store) throw Object.assign(new Error('File not found'), { status: 404 });
-    try {
-      const buffer = await store.get(oldKey);
-      if (!buffer) throw new Error('missing');
-      const content = new TextDecoder().decode(buffer);
-      await store.set(newKey, content);
-      await copyRevisionData(oldName, newName);
-      await store.delete(oldKey);
-      await removeRevisionData(oldName);
-    } catch {
-      throw Object.assign(new Error('File not found'), { status: 404 });
-    }
+    const existing = await store.get(oldKey);
+    if (!existing) throw Object.assign(new Error('File not found'), { status: 404 });
+    const newExists = await store.get(newKey);
+    if (newExists) throw Object.assign(new Error('File already exists'), { status: 409 });
+    const content = typeof existing === 'string' ? existing : new TextDecoder().decode(existing as ArrayBuffer);
+    await store.set(newKey, content);
+    await copyRevisionData(oldName, newName);
+    await store.delete(oldKey);
+    await removeRevisionData(oldName);
   } else {
     const oldPath = oldKey;
     const newPath = newKey;
@@ -692,13 +698,14 @@ export async function renameFile(oldName: string, newName: string): Promise<void
 
     if (revisions.length > 0) {
       const latest = revisions[revisions.length - 1];
+      const renameTimestamp = nowIso();
       await appendImmutableRevision(newDocumentId, {
         content: latest.content,
         notes: [
           {
-            id: generateRevisionId(nowIso()),
+            id: generateRevisionId(renameTimestamp),
             message: `Renamed from ${oldName}`,
-            createdAt: nowIso(),
+            createdAt: renameTimestamp,
           },
         ],
       });

@@ -121,12 +121,12 @@ export default function EditorPage() {
     function onKeyDown(e: KeyboardEvent) {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault();
-        handleSaveCheckpoint();
+        if (!isSaving) handleSaveCheckpoint();
       }
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [handleSaveCheckpoint]);
+  }, [handleSaveCheckpoint, isSaving]);
 
   async function handleFileSelect(filename: string) {
     // Persist current edits to local working-draft buffer before switching files.

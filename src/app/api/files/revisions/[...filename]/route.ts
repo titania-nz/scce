@@ -1,15 +1,8 @@
 import { NextResponse } from 'next/server';
 import { listRevisions } from '@/lib/fileStorage';
+import { parseFilename } from '@/lib/parseFilename';
 
 type Params = { params: Promise<{ filename: string[] }> };
-
-function parseFilename(segments: string[]): string {
-  const filename = segments.join('/');
-  if (!filename) {
-    throw Object.assign(new Error('Invalid filename'), { status: 400 });
-  }
-  return filename;
-}
 
 // API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function GET(_request: Request, { params }: Params) {

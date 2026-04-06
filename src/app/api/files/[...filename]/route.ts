@@ -1,17 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readFile, writeFile, deleteFile, renameFile } from '@/lib/fileStorage';
 import { deleteRevisions, readRevisions, renameRevisions, writeRevisions } from '@/lib/revisionStorage';
+import { parseFilename } from '@/lib/parseFilename';
 import { Revision, RevisionStatus } from '@/types';
 
 type Params = { params: Promise<{ filename: string[] }> };
-
-function parseFilename(segments: string[]): string {
-  const filename = segments.join('/');
-  if (!filename) {
-    throw Object.assign(new Error('Invalid filename'), { status: 400 });
-  }
-  return filename;
-}
 
 const VALID_STATUSES: RevisionStatus[] = ['accepted', 'rejected', 'needs-review'];
 
@@ -85,12 +78,16 @@ export async function PUT(request: NextRequest, { params }: Params) {
       const lastRevision = revisions.at(-1);
       const lastTags = lastRevision?.tags ?? [];
 
+      const tagsChanged =
+        lastTags.length !== tags.length ||
+        [...tags].sort().join('\0') !== [...lastTags].sort().join('\0');
+
       const shouldAppendRevision =
         !lastRevision ||
         lastRevision.content !== content ||
         lastRevision.note !== note ||
         lastRevision.status !== status ||
-        lastTags.join('|') !== tags.join('|');
+        tagsChanged;
 
       const updatedRevisions = shouldAppendRevision
         ? [

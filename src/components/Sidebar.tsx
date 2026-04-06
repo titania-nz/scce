@@ -335,6 +335,31 @@ export default function Sidebar({
     return output;
   }, [chapterSearch, dateFrom, dateTo, files, metaSearch, revisionMetaByFile]);
 
+  async function importFilesFromList(inputFiles: FileList | File[]) {
+    const list = Array.from(inputFiles);
+    if (list.length === 0) return;
+
+    setError(null);
+    let lastCreated: string | null = null;
+    const takenNames = new Set(files.map((file) => file.name));
+
+    for (const file of list) {
+      try {
+        const content = await file.text();
+        const name = makeUploadFilename(file.name, takenNames);
+        await createFile(name, content);
+        lastCreated = name;
+      } catch (err: unknown) {
+        const e = err as { message?: string };
+        setError(e.message ?? `Could not import ${file.name}`);
+      }
+    }
+
+    if (lastCreated) {
+      onFileSelect(lastCreated);
+    }
+  }
+
   useEffect(() => {
     if (selectedFile) {
       return;
@@ -346,32 +371,6 @@ export default function Sidebar({
       return Array.from(types).includes('Files');
     }
 
-    async function importFiles(inputFiles: FileList | null) {
-      if (!inputFiles || inputFiles.length === 0) {
-        return;
-      }
-
-      setError(null);
-      let lastCreated: string | null = null;
-      const takenNames = new Set(files.map((file) => file.name));
-
-      for (const file of Array.from(inputFiles)) {
-        try {
-          const content = await file.text();
-          const name = makeUploadFilename(file.name, takenNames);
-          await createFile(name, content);
-          lastCreated = name;
-        } catch (err: unknown) {
-          const e = err as { message?: string };
-          setError(e.message ?? `Could not import ${file.name}`);
-        }
-      }
-
-      if (lastCreated) {
-        onFileSelect(lastCreated);
-      }
-    }
-
     const onDragOver = (event: DragEvent) => {
       if (!hasDropFiles(event)) return;
       event.preventDefault();
@@ -380,7 +379,7 @@ export default function Sidebar({
     const onDrop = (event: DragEvent) => {
       if (!hasDropFiles(event)) return;
       event.preventDefault();
-      void importFiles(event.dataTransfer?.files ?? null);
+      void importFilesFromList(event.dataTransfer?.files ?? []);
     };
 
     window.addEventListener('dragover', onDragOver);
@@ -389,6 +388,9 @@ export default function Sidebar({
       window.removeEventListener('dragover', onDragOver);
       window.removeEventListener('drop', onDrop);
     };
+  // importFilesFromList is defined in the same render scope; including it would
+  // require useCallback which adds noise without benefit here.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [createFile, files, onFileSelect, selectedFile]);
 
   function resetNewInput() {
@@ -433,23 +435,9 @@ export default function Sidebar({
     }
 
     const picked = e.target.files;
-    if (!picked || picked.length === 0) return;
-    setError(null);
-    let lastCreated: string | null = null;
-    const takenNames = new Set(files.map((file) => file.name));
-    for (const file of Array.from(picked)) {
-      try {
-        const content = await file.text();
-        const name = makeUploadFilename(file.name, takenNames);
-        await createFile(name, content);
-        lastCreated = name;
-      } catch (err: unknown) {
-        const e = err as { message?: string };
-        setError(e.message ?? `Could not import ${file.name}`);
-      }
-    }
     e.target.value = '';
-    if (lastCreated) onFileSelect(lastCreated);
+    if (!picked || picked.length === 0) return;
+    await importFilesFromList(picked);
   }
 
   async function handleDelete(file: FileEntry) {
@@ -457,7 +445,7 @@ export default function Sidebar({
     setError(null);
     try {
       await deleteFile(file.name);
-      if (selectedFile === file.name) onFileDeleted(file.name);
+      onFileDeleted(file.name);
     } catch (err: unknown) {
       const e = err as { message?: string };
       setError(e.message ?? 'Could not delete file');
