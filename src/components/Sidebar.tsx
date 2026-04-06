@@ -55,28 +55,29 @@ export default function Sidebar({
   const [renamingFile, setRenamingFile] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['']));
-  const [chapterSearch, setChapterSearch] = useState('');
-  const [metaSearch, setMetaSearch] = useState('');
+  const [pathSearch, setPathSearch] = useState('');
+  const [nameSearch, setNameSearch] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const filteredFiles = useMemo(() => {
-    const chapterFilter = chapterSearch.trim().toLowerCase();
-    const metaFilter = metaSearch.trim().toLowerCase();
+    const pathFilter = pathSearch.trim().toLowerCase();
+    const nameFilter = nameSearch.trim().toLowerCase();
     const fromDate = dateFrom ? new Date(`${dateFrom}T00:00:00`) : null;
     const toDate = dateTo ? new Date(`${dateTo}T23:59:59`) : null;
 
     return files.filter((file) => {
       const fileDate = new Date(file.mtime);
-      const chapterMatches = !chapterFilter || file.name.toLowerCase().includes(chapterFilter);
-      const metaMatches = !metaFilter || file.name.toLowerCase().includes(metaFilter);
+      const chapterMatches = !pathFilter || file.name.toLowerCase().includes(pathFilter);
+      const fileName = file.name.split('/').at(-1)?.toLowerCase() ?? file.name.toLowerCase();
+      const metaMatches = !nameFilter || fileName.includes(nameFilter);
       const fromMatches = !fromDate || fileDate >= fromDate;
       const toMatches = !toDate || fileDate <= toDate;
       return chapterMatches && metaMatches && fromMatches && toMatches;
     });
-  }, [chapterSearch, dateFrom, dateTo, files, metaSearch]);
+  }, [pathSearch, dateFrom, dateTo, files, nameSearch]);
 
   const tree = useMemo(() => buildTree(filteredFiles), [filteredFiles]);
 
@@ -313,8 +314,8 @@ export default function Sidebar({
       <div className="px-3 py-2 border-b border-gray-700 space-y-2">
         <input
           type="text"
-          value={chapterSearch}
-          onChange={(e) => setChapterSearch(e.target.value)}
+          value={pathSearch}
+          onChange={(e) => setPathSearch(e.target.value)}
           placeholder="Filter by path"
           className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
         />
@@ -336,8 +337,8 @@ export default function Sidebar({
         </div>
         <input
           type="text"
-          value={metaSearch}
-          onChange={(e) => setMetaSearch(e.target.value)}
+          value={nameSearch}
+          onChange={(e) => setNameSearch(e.target.value)}
           placeholder="Filter by filename"
           className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
         />

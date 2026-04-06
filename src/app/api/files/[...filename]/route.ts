@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readFile, writeFile, deleteFile, renameFile } from '@/lib/fileStorage';
 
-type Params = { params: Promise<{ filename: string[] }> };
+type Params = { params: Promise<{ filename: string[] | string }> };
 
-function getFilename(parts: string[]): string {
-  return parts.join('/');
+function getFilename(parts: string[] | string): string {
+  if (Array.isArray(parts)) return parts.join('/');
+  return parts;
 }
 
 export async function GET(_request: NextRequest, { params }: Params) {

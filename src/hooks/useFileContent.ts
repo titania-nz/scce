@@ -4,7 +4,14 @@ import useSWR from 'swr';
 import { FileContentResponse } from '@/types';
 import { getFileApiPath } from '@/lib/apiPath';
 
-const fetcher = (url: string) => fetch(url).then((r) => r.json());
+const fetcher = async (url: string) => {
+  const response = await fetch(url);
+  if (!response.ok) {
+    const errorPayload = await response.json().catch(() => ({}));
+    throw new Error(errorPayload.error ?? 'Could not load file');
+  }
+  return response.json();
+};
 
 export function useFileContent(filename: string | null) {
   const key = filename ? getFileApiPath(filename) : null;

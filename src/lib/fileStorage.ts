@@ -4,7 +4,8 @@ import { getStore } from '@netlify/blobs';
 import { FileEntry } from '@/types';
 
 const VALID_SEGMENT = /^[a-zA-Z0-9_. -]+$/;
-const MAX_FILENAME_LENGTH = 255;
+const MAX_PATH_LENGTH = 1024;
+const MAX_SEGMENT_LENGTH = 255;
 
 const isNetlifyRuntime =
   process.env.NETLIFY === 'true' ||
@@ -30,7 +31,7 @@ export function getNotesDir(): string {
 function validateFilename(filename: string): string {
   const normalized = filename.replace(/\\/g, '/').trim();
 
-  if (!normalized || normalized.length > MAX_FILENAME_LENGTH) {
+  if (!normalized || normalized.length > MAX_PATH_LENGTH) {
     throw Object.assign(new Error('Invalid filename'), { status: 400 });
   }
 
@@ -39,7 +40,7 @@ function validateFilename(filename: string): string {
   }
 
   const segments = normalized.split('/');
-  if (segments.some((segment) => !segment || segment === '.' || segment === '..' || !VALID_SEGMENT.test(segment))) {
+  if (segments.some((segment) => !segment || segment.length > MAX_SEGMENT_LENGTH || segment === '.' || segment === '..' || !VALID_SEGMENT.test(segment))) {
     throw Object.assign(new Error('Invalid filename'), { status: 400 });
   }
 
