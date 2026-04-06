@@ -637,6 +637,8 @@ export async function renameFile(oldName: string, newName: string): Promise<void
       throw Object.assign(new Error('File already exists'), { status: 409 });
     }
     fs.renameSync(oldPath, newPath);
+    await copyRevisionData(oldName, newName);
+    await removeRevisionData(oldName);
   }
 
   const oldDocumentId = legacyFilenameToDocumentId(oldName);
