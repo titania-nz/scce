@@ -8,7 +8,8 @@ import Toolbar from './Toolbar';
 import CompareView from './CompareView';
 import { useFileContent } from '@/hooks/useFileContent';
 import { useAutoSave } from '@/hooks/useAutoSave';
-import { RevisionStatus } from '@/types';
+import { buildFileExportApiPath, buildFilePublishApiPath } from '@/lib/fileApiPath';
+import { PublishHistoryEntry, PublishTargetProfile, RevisionStatus } from '@/types';
 
 // CodeMirror accesses browser APIs — must be dynamically imported with ssr:false
 const EditorPane = dynamic(() => import('./EditorPane'), { ssr: false });
@@ -32,6 +33,12 @@ export default function EditorPage() {
   const [status, setStatus] = useState<RevisionStatus | ''>('');
   const [workingDraftByFile, setWorkingDraftByFile] = useState<Record<string, string>>({});
   const [lastCheckpointAtByFile, setLastCheckpointAtByFile] = useState<Record<string, string>>({});
+  const [publishProfiles, setPublishProfiles] = useState<PublishTargetProfile[]>([]);
+  const [publishProfileId, setPublishProfileId] = useState('docs-site');
+  const [publishHistory, setPublishHistory] = useState<PublishHistoryEntry[]>([]);
+  const [latestRevisionStatus, setLatestRevisionStatus] = useState<RevisionStatus | ''>('');
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [publishMessage, setPublishMessage] = useState<string>('');
 
   const { content: loadedContent, revisions, isLoading, saveContent } = useFileContent(selectedFile);
   const prevFileRef = useRef<string | null>(null);
@@ -87,6 +94,37 @@ export default function EditorPage() {
 
     setContent(loadedContent);
   }, [isDirty, loadedContent, selectedFile, workingDraftByFile]);
+
+  useEffect(() => {
+    async function loadPublishMetadata() {
+      if (!selectedFile) {
+        setPublishProfiles([]);
+        setPublishHistory([]);
+        setPublishMessage('');
+        setLatestRevisionStatus('');
+        return;
+      }
+      try {
+        const res = await fetch(buildFilePublishApiPath(selectedFile));
+        const payload = await res.json() as {
+          profiles?: PublishTargetProfile[];
+          history?: PublishHistoryEntry[];
+          latestRevisionStatus?: RevisionStatus;
+        };
+        if (!res.ok) {
+          throw new Error(payload && 'error' in payload ? String((payload as { error?: string }).error) : 'Could not load publish profiles');
+        }
+        setPublishProfiles(payload.profiles ?? []);
+        setPublishHistory(payload.history ?? []);
+        setLatestRevisionStatus(payload.latestRevisionStatus ?? '');
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Could not load publish profiles';
+        setPublishMessage(message);
+      }
+    }
+
+    loadPublishMetadata();
+  }, [selectedFile, revisions]);
 
   const { isSaving, saveNow } = useAutoSave({
     content,
@@ -157,6 +195,10 @@ export default function EditorPage() {
       setRevisionNote('');
       setTagsInput('');
       setStatus('');
+      setPublishHistory([]);
+      setPublishProfiles([]);
+      setPublishMessage('');
+      setLatestRevisionStatus('');
     }
 
     setWorkingDraftByFile((prev) => {
@@ -195,6 +237,78 @@ export default function EditorPage() {
   }
 
   const lastCheckpointAt = selectedFile ? lastCheckpointAtByFile[selectedFile] ?? null : null;
+
+  async function handleExport(format: 'html' | 'pdf' | 'docx') {
+    if (!selectedFile) return;
+    setPublishMessage('');
+    try {
+      const endpoint = `${buildFileExportApiPath(selectedFile)}?format=${encodeURIComponent(format)}`;
+      const res = await fetch(endpoint);
+      if (!res.ok) {
+        const payload = await res.json();
+        throw new Error(payload.error ?? 'Could not export file');
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = selectedFile.replace(/\.md$/i, `.${format}`);
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Could not export file';
+      setPublishMessage(message);
+    }
+  }
+
+  async function handlePublish() {
+    if (!selectedFile || !publishProfileId) return;
+    setIsPublishing(true);
+    setPublishMessage('');
+    try {
+      const res = await fetch(buildFilePublishApiPath(selectedFile), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profileId: publishProfileId }),
+      });
+      const payload = await res.json() as { error?: string; history?: PublishHistoryEntry[]; published?: PublishHistoryEntry };
+      if (!res.ok) {
+        throw new Error(payload.error ?? 'Could not publish');
+      }
+      setPublishHistory(payload.history ?? []);
+      setPublishMessage(payload.published?.outcome ?? 'Published successfully');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Could not publish';
+      setPublishMessage(message);
+    } finally {
+      setIsPublishing(false);
+    }
+  }
+
+  async function handleRollback(entryId: string) {
+    if (!selectedFile) return;
+    setIsPublishing(true);
+    setPublishMessage('');
+    try {
+      const res = await fetch(buildFilePublishApiPath(selectedFile), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'rollback', entryId }),
+      });
+      const payload = await res.json() as { error?: string; history?: PublishHistoryEntry[] };
+      if (!res.ok) {
+        throw new Error(payload.error ?? 'Could not rollback');
+      }
+      setPublishHistory(payload.history ?? []);
+      setPublishMessage('Rollback restored the selected published revision as the active draft.');
+      setLatestRevisionStatus('needs-review');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Could not rollback';
+      setPublishMessage(message);
+    } finally {
+      setIsPublishing(false);
+    }
+  }
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-950 text-gray-100">
@@ -303,6 +417,44 @@ export default function EditorPage() {
                 </label>
               </div>
 
+              <div className="p-3 border-b border-gray-700 space-y-3">
+                <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Publishing pipeline</h2>
+                <div className="grid grid-cols-3 gap-1.5">
+                  <button onClick={() => handleExport('html')} className="rounded bg-gray-800 hover:bg-gray-700 px-2 py-1 text-[11px] text-gray-200">Export HTML</button>
+                  <button onClick={() => handleExport('pdf')} className="rounded bg-gray-800 hover:bg-gray-700 px-2 py-1 text-[11px] text-gray-200">Export PDF</button>
+                  <button onClick={() => handleExport('docx')} className="rounded bg-gray-800 hover:bg-gray-700 px-2 py-1 text-[11px] text-gray-200">Export DOCX</button>
+                </div>
+
+                <label className="block text-xs text-gray-300">
+                  Publish target
+                  <select
+                    className="mt-1 w-full bg-gray-800 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-100"
+                    value={publishProfileId}
+                    onChange={(e) => setPublishProfileId(e.target.value)}
+                  >
+                    {(publishProfiles.length
+                      ? publishProfiles
+                      : [{ id: 'docs-site', label: 'Docs site', description: 'Default docs site profile', type: 'docs-site' as const }]).map((profile) => (
+                      <option key={profile.id} value={profile.id}>{profile.label}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <button
+                  onClick={handlePublish}
+                  disabled={isPublishing || latestRevisionStatus !== 'accepted'}
+                  className="w-full rounded bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-700 disabled:text-gray-500 px-2 py-1.5 text-xs text-white"
+                  title={latestRevisionStatus !== 'accepted' ? 'Mark latest revision as Accepted to enable one-click publish.' : 'Publish selected target from approved status'}
+                >
+                  {isPublishing ? 'Publishing…' : 'One-click publish (approved only)'}
+                </button>
+
+                <p className="text-[11px] text-gray-400">
+                  Latest status: <span className="text-gray-200">{latestRevisionStatus || 'none'}</span>
+                </p>
+                {publishMessage && <p className="text-[11px] text-blue-300">{publishMessage}</p>}
+              </div>
+
               <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400 sticky top-0 bg-gray-900 py-1">
                   Revision timeline
@@ -340,6 +492,30 @@ export default function EditorPage() {
                         ))}
                       </div>
                     </button>
+                  ))
+                )}
+
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400 pt-3">
+                  Published history
+                </h3>
+                {publishHistory.length === 0 ? (
+                  <p className="text-xs text-gray-500">No publish runs yet.</p>
+                ) : (
+                  publishHistory.map((entry) => (
+                    <div key={entry.id} className="w-full text-left p-2 rounded border border-gray-700 bg-gray-900">
+                      <p className="text-[11px] text-gray-500">{new Date(entry.createdAt).toLocaleString()}</p>
+                      <p className="text-xs text-gray-200 mt-1">{entry.outcome}</p>
+                      <div className="mt-2 flex items-center justify-between gap-2">
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-700 text-gray-200">{entry.profileId}</span>
+                        <button
+                          onClick={() => handleRollback(entry.id)}
+                          disabled={isPublishing}
+                          className="text-[10px] px-1.5 py-0.5 rounded bg-amber-600 hover:bg-amber-500 disabled:bg-gray-700 disabled:text-gray-500 text-white"
+                        >
+                          Rollback
+                        </button>
+                      </div>
+                    </div>
                   ))
                 )}
               </div>

@@ -88,3 +88,34 @@ export interface FileRevisionsResponse {
   currentDraftRevisionId: string | null;
   revisions: RevisionEntry[];
 }
+
+
+export type ExportFormat = 'html' | 'pdf' | 'docx';
+
+export type PublishTargetType = 'docs-site' | 'cms-webhook' | 'git-commit';
+
+export interface PublishTargetProfile {
+  id: string;
+  label: string;
+  type: PublishTargetType;
+  description: string;
+}
+
+export interface PublishHistoryEntry {
+  id: string;
+  createdAt: string;
+  profileId: string;
+  profileType: PublishTargetType;
+  revisionId: string | null;
+  outcome: string;
+  contentSnapshot: string;
+}
+
+export interface PublishHistoryResponse {
+  name: string;
+  canPublish: boolean;
+  latestRevisionId: string | null;
+  latestRevisionStatus?: RevisionStatus;
+  profiles: PublishTargetProfile[];
+  history: PublishHistoryEntry[];
+}
