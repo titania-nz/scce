@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { COOKIE_NAME, COOKIE_OPTIONS } from './cookie';
+import { createAuthToken } from '@/lib/authToken';
 
 // API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function POST(request: NextRequest) {
@@ -18,7 +19,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Incorrect password' }, { status: 401 });
   }
 
+  const token = await createAuthToken(authSecret);
   const response = NextResponse.json({ ok: true });
-  response.cookies.set(COOKIE_NAME, authSecret, COOKIE_OPTIONS);
+  response.cookies.set(COOKIE_NAME, token, COOKIE_OPTIONS);
   return response;
 }
