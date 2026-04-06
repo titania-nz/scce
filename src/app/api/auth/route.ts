@@ -36,6 +36,6 @@ export async function POST(request: NextRequest) {
 
   resetAuthFailures(clientIp);
   const response = NextResponse.json({ ok: true });
-  response.cookies.set(COOKIE_NAME, createAuthToken(authSecret), COOKIE_OPTIONS);
+  response.cookies.set(COOKIE_NAME, token, COOKIE_OPTIONS);
   return response;
 }

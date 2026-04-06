@@ -253,6 +253,7 @@ export default function Sidebar({
   const [selectedHeading, setSelectedHeading] = useState('');
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [savedFilters, setSavedFilters] = useState<Array<{ id: string; name: string; chapterSearch: string; metaSearch: string; dateFrom: string; dateTo: string }>>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [savedFilters, setSavedFilters] = useState<Array<{ id: string; name: string; filter: any }>>([]);
 
@@ -640,6 +641,7 @@ export default function Sidebar({
   }
 
   async function handleRename(oldName: string) {
+    if (renamingInFlightRef.current) return;
     let newName = renameValue.trim();
     if (!newName) {
       setRenamingFile(null);
@@ -650,6 +652,7 @@ export default function Sidebar({
       setRenamingFile(null);
       return;
     }
+    renamingInFlightRef.current = true;
     setError(null);
     try {
       await renameFile(oldName, newName);
@@ -658,6 +661,8 @@ export default function Sidebar({
     } catch (err: unknown) {
       const e = err as { message?: string };
       setError(e.message ?? 'Could not rename file');
+    } finally {
+      renamingInFlightRef.current = false;
     }
   }
 
