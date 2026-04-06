@@ -2,9 +2,13 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFiles } from '@/hooks/useFiles';
-import { FileContentResponse, FileEntry } from '@/types';
+import type { FileContentResponse, FileEntry } from '@/types';
 import { buildFileApiPath } from '@/lib/fileApiPath';
-import { RevisionMetaSummary, parseMetaFromContent } from '@/lib/revisionMeta';
+import {
+  DEFAULT_REVISION_META,
+  parseMetaFromContent,
+} from '@/lib/revisionMeta';
+import type { RevisionMetaSummary } from '@/lib/revisionMeta';
 
 interface SidebarProps {
   selectedFile: string | null;
@@ -43,37 +47,30 @@ interface DocumentGroup {
   chapters: ChapterGroup[];
 }
 
-interface HeadingItem {
-  text: string;
-  level: number;
-}
-
-interface SearchEntry {
-  id: string;
-  sourceType: 'current' | 'revision';
-  file: FileEntry;
-  document: string;
-  chapter: string;
-  revisionLabel: string;
-  createdAt: Date;
-  createdAtIso: string;
-  tags: string[];
-  status: string;
-  note: string;
+interface ImportCandidate {
+  originalPath: string;
+  name: string;
   content: string;
+  hash: string;
+  inferredDocument: string;
+  inferredChapter: string;
 }
 
-interface SearchResult {
-  entry: SearchEntry;
-  score: number;
-  snippet: string;
+interface ImportWizardState {
+  candidates: ImportCandidate[];
+  duplicateByHash: Record<string, string[]>;
 }
 
-const DEFAULT_META: RevisionMeta = {
-  tags: [],
-  note: '',
-  status: '',
-};
+interface SavedFilter {
+  id: string;
+  name: string;
+  chapterSearch: string;
+  metaSearch: string;
+  dateFrom: string;
+  dateTo: string;
+}
+
+const DEFAULT_META: RevisionMeta = DEFAULT_REVISION_META;
 const SAVED_FILTERS_STORAGE_KEY = 'scce.savedSidebarFilters';
 
 // Helper function: keeps a small, testable transformation isolated from UI side effects.
@@ -116,6 +113,184 @@ function makeUploadFilename(originalName: string, takenNames: Set<string>): stri
   }
   takenNames.add(candidate);
   return candidate;
+}
+
+// Helper function: keeps a small, testable transformation isolated from UI side effects.
+function sanitizeRelativePath(input: string): string {
+  const normalized = input
+    .replace(/\\/g, '/')
+    .replace(/^\/+/, '')
+    .split('/')
+    .filter(Boolean)
+    .map((segment) => segment.replace(/[^a-zA-Z0-9_\-. ]/g, '_').trim())
+    .filter(Boolean)
+    .join('/');
+  return normalized;
+}
+
+// Helper function: keeps a small, testable transformation isolated from UI side effects.
+async function hashContent(content: string): Promise<string> {
+  const bytes = new TextEncoder().encode(content);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((value) => value.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+// Helper function: keeps a small, testable transformation isolated from UI side effects.
+function applyRenameTemplate(
+  template: string,
+  index: number,
+  sourceName: string,
+  inferredDocument: string,
+  inferredChapter: string,
+): string {
+  const stem = sourceName.replace(/\.[^.]*$/, '');
+  const filename = template
+    .replaceAll('{n}', String(index + 1))
+    .replaceAll('{rev}', '1')
+    .replaceAll('{basename}', stem)
+    .replaceAll('{document}', inferredDocument.replace(/[^\w\-./ ]/g, '_'))
+    .replaceAll('{chapter}', inferredChapter.replace(/[^\w\-./ ]/g, '_'));
+
+  const cleaned = sanitizeRelativePath(filename);
+  const withExt = cleaned.endsWith('.md') ? cleaned : `${cleaned}.md`;
+  return withExt || `import-${index + 1}.md`;
+}
+
+async function inflateRawDeflate(data: Uint8Array): Promise<string> {
+  if (typeof DecompressionStream === 'undefined') {
+    throw new Error('ZIP import requires a browser with DecompressionStream support.');
+  }
+  const arrayBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+  const stream = new Blob([arrayBuffer]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  const response = new Response(stream);
+  return response.text();
+}
+
+// Helper function: keeps a small, testable transformation isolated from UI side effects.
+async function extractMarkdownFromZip(buffer: ArrayBuffer): Promise<Array<{ name: string; content: string }>> {
+  const view = new DataView(buffer);
+  const bytes = new Uint8Array(buffer);
+  const decoder = new TextDecoder();
+  const entries: Array<{ name: string; content: string }> = [];
+  let offset = 0;
+
+  while (offset + 30 <= bytes.length) {
+    const signature = view.getUint32(offset, true);
+    if (signature !== 0x04034b50) break;
+    const flags = view.getUint16(offset + 6, true);
+    const method = view.getUint16(offset + 8, true);
+    const compressedSize = view.getUint32(offset + 18, true);
+    const fileNameLength = view.getUint16(offset + 26, true);
+    const extraLength = view.getUint16(offset + 28, true);
+    const nameStart = offset + 30;
+    const nameEnd = nameStart + fileNameLength;
+    const dataStart = nameEnd + extraLength;
+    const dataEnd = dataStart + compressedSize;
+
+    if (flags & 0x08) {
+      throw new Error('ZIP data descriptors are not supported in this importer.');
+    }
+    if (dataEnd > bytes.length) {
+      throw new Error('Corrupt ZIP file.');
+    }
+
+    const name = decoder.decode(bytes.slice(nameStart, nameEnd));
+    const isDirectory = name.endsWith('/');
+    if (!isDirectory && /\.(md|txt)$/i.test(name)) {
+      const fileBytes = bytes.slice(dataStart, dataEnd);
+      const content =
+        method === 0
+          ? decoder.decode(fileBytes)
+          : method === 8
+          ? await inflateRawDeflate(fileBytes)
+          : '';
+      if (content) {
+        entries.push({ name, content });
+      }
+    }
+    offset = dataEnd;
+  }
+
+  return entries;
+}
+
+// Helper function: keeps a small, testable transformation isolated from UI side effects.
+function splitFrontmatter(content: string): { frontmatter: string; body: string } {
+  if (!content.startsWith('---\n')) {
+    return { frontmatter: '', body: content };
+  }
+
+  const endMarkerIndex = content.indexOf('\n---\n', 4);
+  if (endMarkerIndex === -1) {
+    return { frontmatter: '', body: content };
+  }
+
+  return {
+    frontmatter: content.slice(4, endMarkerIndex),
+    body: content.slice(endMarkerIndex + 5),
+  };
+}
+
+// Helper function: keeps a small, testable transformation isolated from UI side effects.
+function parseMetaFromContent(content: string): RevisionMeta {
+  if (!content) return DEFAULT_META;
+  const { frontmatter, body } = splitFrontmatter(content);
+
+  const tags = new Set<string>();
+  let note = '';
+  let status = '';
+
+  if (frontmatter) {
+    const lines = frontmatter.split('\n');
+    for (const line of lines) {
+      const [rawKey, ...valueParts] = line.split(':');
+      if (!rawKey || valueParts.length === 0) continue;
+      const key = rawKey.trim().toLowerCase();
+      const rawValue = valueParts.join(':').trim();
+      if (!rawValue) continue;
+
+      if (key === 'status') {
+        status = rawValue.replace(/^["']|["']$/g, '').toLowerCase();
+      }
+
+      if (key === 'note' || key === 'summary') {
+        note = rawValue.replace(/^["']|["']$/g, '');
+      }
+
+      if (key === 'tag' || key === 'tags') {
+        const cleaned = rawValue.replace(/^\[|\]$/g, '');
+        cleaned
+          .split(',')
+          .map((tag) => tag.trim().replace(/^["']|["']$/g, ''))
+          .filter(Boolean)
+          .forEach((tag) => tags.add(tag.toLowerCase()));
+      }
+    }
+  }
+
+  if (!note) {
+    const firstBodyLine = body
+      .split('\n')
+      .map((line) => line.trim())
+      .find((line) => line.length > 0 && !line.startsWith('#'));
+    note = firstBodyLine ? firstBodyLine.slice(0, 120) : '';
+  }
+
+  if (tags.size === 0) {
+    const tagMatches = body.match(/(^|\s)#([a-zA-Z0-9_-]+)/g) ?? [];
+    tagMatches.forEach((match) => {
+      const tag = match.trim().replace(/^#/, '').toLowerCase();
+      if (tag) tags.add(tag);
+    });
+  }
+
+  return {
+    tags: Array.from(tags),
+    note,
+    status,
+  };
 }
 
 // Helper function: keeps a small, testable transformation isolated from UI side effects.
@@ -235,6 +410,24 @@ function renderHighlightedText(source: string, query: string) {
   );
 }
 
+function getCurrentWeekRange(): { from: string; to: string } {
+  const now = new Date();
+  const day = now.getDay();
+  const diffToMonday = (day + 6) % 7;
+  const start = new Date(now);
+  start.setDate(now.getDate() - diffToMonday);
+  start.setHours(0, 0, 0, 0);
+
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  end.setHours(23, 59, 59, 999);
+
+  return {
+    from: start.toISOString().slice(0, 10),
+    to: end.toISOString().slice(0, 10),
+  };
+}
+
 // Main component export: this is the entry point rendered by parent routes/components.
 export default function Sidebar({
   selectedFile,
@@ -255,6 +448,7 @@ export default function Sidebar({
   const [metaSearch, setMetaSearch] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [savedFilters, setSavedFilters] = useState<SavedFilter[]>([]);
   const [collapsedDocuments, setCollapsedDocuments] = useState<Record<string, boolean>>({});
   const [collapsedChapters, setCollapsedChapters] = useState<Record<string, boolean>>({});
   const [revisionMetaByFile, setRevisionMetaByFile] = useState<Record<string, RevisionMeta>>({});
@@ -270,24 +464,60 @@ export default function Sidebar({
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const [savedFilters, setSavedFilters] = useState<Array<{ id: string; name: string; filter: any }>>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const renamingInFlightRef = useRef(false);
+  const zipInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
+  const [importWizard, setImportWizard] = useState<ImportWizardState | null>(null);
+  const [importTemplate, setImportTemplate] = useState('chapter-{n}-r{rev}.md');
+  const [wizardLoading, setWizardLoading] = useState(false);
 
-  function getCurrentWeekRange() {
-    const now = new Date();
-    const startOfWeek = new Date(now);
-    startOfWeek.setDate(now.getDate() - now.getDay());
-    startOfWeek.setHours(0, 0, 0, 0);
-    const endOfWeek = new Date(startOfWeek);
-    endOfWeek.setDate(startOfWeek.getDate() + 6);
-    endOfWeek.setHours(23, 59, 59, 999);
-    return {
-      from: startOfWeek.toISOString().split('T')[0],
-      to: endOfWeek.toISOString().split('T')[0],
-    };
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(SAVED_FILTERS_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as SavedFilter[];
+      if (!Array.isArray(parsed)) return;
+      setSavedFilters(
+        parsed.filter((item) =>
+          item &&
+          typeof item.id === 'string' &&
+          typeof item.name === 'string' &&
+          typeof item.chapterSearch === 'string' &&
+          typeof item.metaSearch === 'string' &&
+          typeof item.dateFrom === 'string' &&
+          typeof item.dateTo === 'string'),
+      );
+    } catch {
+      // noop
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(SAVED_FILTERS_STORAGE_KEY, JSON.stringify(savedFilters));
+  }, [savedFilters]);
+
+  function applyFilter(filter: Pick<SavedFilter, 'chapterSearch' | 'metaSearch' | 'dateFrom' | 'dateTo'>) {
+    setChapterSearch(filter.chapterSearch);
+    setMetaSearch(filter.metaSearch);
+    setDateFrom(filter.dateFrom);
+    setDateTo(filter.dateTo);
   }
 
   function saveCurrentFilter() {
-    // TODO: implement saving current filter
+    const name = window.prompt('Name this filter');
+    if (!name) return;
+    const trimmedName = name.trim();
+    if (!trimmedName) return;
+
+    const nextFilter: SavedFilter = {
+      id: crypto.randomUUID(),
+      name: trimmedName,
+      chapterSearch,
+      metaSearch,
+      dateFrom,
+      dateTo,
+    };
+
+    setSavedFilters((prev) => [...prev, nextFilter]);
   }
 
   useEffect(() => {
@@ -501,26 +731,116 @@ export default function Sidebar({
     return output;
   }, [chapterSearch, dateFrom, dateTo, files, metaSearch, revisionMetaByFile]);
 
-  async function importFilesFromList(inputFiles: FileList | File[]) {
-    const list = Array.from(inputFiles);
-    if (list.length === 0) return;
+  async function buildImportCandidates(entries: Array<{ name: string; content: string }>) {
+    const candidates: ImportCandidate[] = [];
+    for (const entry of entries) {
+      const safePath = sanitizeRelativePath(entry.name);
+      if (!safePath) continue;
+      const parsed = parseFileStructure(safePath);
+      candidates.push({
+        originalPath: safePath,
+        name: safePath,
+        content: entry.content,
+        hash: await hashContent(entry.content),
+        inferredDocument: parsed.document,
+        inferredChapter: parsed.chapter,
+      });
+    }
+    return candidates;
+  }
 
+  async function openImportWizard(candidates: ImportCandidate[]) {
+    if (candidates.length === 0) return;
+    setError(null);
+    const hashToFiles = new Map<string, string[]>();
+    candidates.forEach((candidate) => {
+      const list = hashToFiles.get(candidate.hash) ?? [];
+      list.push(candidate.originalPath);
+      hashToFiles.set(candidate.hash, list);
+    });
+
+    setImportWizard({
+      candidates,
+      duplicateByHash: Object.fromEntries(hashToFiles),
+    });
+  }
+
+  async function importFilesFromList(inputFiles: FileList | File[]) {
+    const list = Array.from(inputFiles).filter((file) => /\.(md|txt)$/i.test(file.name));
+    if (list.length === 0) return;
+    setWizardLoading(true);
+    try {
+      const entries = await Promise.all(
+        list.map(async (file) => ({ name: file.name, content: await file.text() })),
+      );
+      const candidates = await buildImportCandidates(entries);
+      await openImportWizard(candidates);
+    } catch (err: unknown) {
+      const e = err as { message?: string };
+      setError(e.message ?? 'Could not prepare import');
+    } finally {
+      setWizardLoading(false);
+    }
+  }
+
+  async function importZipFile(file: File) {
+    setWizardLoading(true);
+    try {
+      const entries = await extractMarkdownFromZip(await file.arrayBuffer());
+      const candidates = await buildImportCandidates(entries);
+      await openImportWizard(candidates);
+    } catch (err: unknown) {
+      const e = err as { message?: string };
+      setError(e.message ?? 'Could not read ZIP file');
+    } finally {
+      setWizardLoading(false);
+    }
+  }
+
+  async function confirmImportFromWizard() {
+    if (!importWizard) return;
     setError(null);
     let lastCreated: string | null = null;
     const takenNames = new Set(files.map((file) => file.name));
+    const existingHashes = new Map<string, string>();
 
-    for (const file of list) {
+    await Promise.all(
+      files.map(async (file) => {
+        try {
+          const res = await fetch(buildFileApiPath(file.name));
+          if (!res.ok) return;
+          const payload = (await res.json()) as { content?: string };
+          const content = payload.content ?? '';
+          existingHashes.set(await hashContent(content), file.name);
+        } catch {
+          // Skip hash lookup failures for existing files.
+        }
+      }),
+    );
+
+    for (let index = 0; index < importWizard.candidates.length; index += 1) {
+      const candidate = importWizard.candidates[index];
+      if (existingHashes.has(candidate.hash)) {
+        continue;
+      }
+      const templated = applyRenameTemplate(
+        importTemplate,
+        index,
+        candidate.name,
+        candidate.inferredDocument,
+        candidate.inferredChapter,
+      );
+      const name = makeUploadFilename(templated, takenNames);
       try {
-        const content = await file.text();
-        const name = makeUploadFilename(file.name, takenNames);
-        await createFile(name, content);
+        await createFile(name, candidate.content);
         lastCreated = name;
       } catch (err: unknown) {
         const e = err as { message?: string };
-        setError(e.message ?? `Could not import ${file.name}`);
+        setError(e.message ?? `Could not import ${candidate.name}`);
       }
     }
 
+    setImportWizard(null);
     if (lastCreated) {
       onFileSelect(lastCreated);
     }
@@ -545,7 +865,12 @@ export default function Sidebar({
     const onDrop = (event: DragEvent) => {
       if (!hasDropFiles(event)) return;
       event.preventDefault();
-      void importFilesFromList(event.dataTransfer?.files ?? []);
+      const dropped = Array.from(event.dataTransfer?.files ?? []);
+      if (dropped.length === 1 && dropped[0].name.toLowerCase().endsWith('.zip')) {
+        void importZipFile(dropped[0]);
+        return;
+      }
+      void importFilesFromList(dropped);
     };
 
     window.addEventListener('dragover', onDragOver);
@@ -604,6 +929,54 @@ export default function Sidebar({
     e.target.value = '';
     if (!picked || picked.length === 0) return;
     await importFilesFromList(picked);
+  }
+
+  async function handleZipUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    if (selectedFile) {
+      setError('Import is only available when no file is selected.');
+      e.target.value = '';
+      return;
+    }
+
+    const picked = e.target.files;
+    e.target.value = '';
+    if (!picked || picked.length === 0) return;
+    await importZipFile(picked[0]);
+  }
+
+  async function handleFolderUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    if (selectedFile) {
+      setError('Import is only available when no file is selected.');
+      e.target.value = '';
+      return;
+    }
+
+    const picked = e.target.files;
+    e.target.value = '';
+    if (!picked || picked.length === 0) return;
+    const entries = Array.from(picked).map((file) => {
+      const withRelative = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
+      return {
+        file,
+        relativePath: withRelative && withRelative.trim().length > 0 ? withRelative : file.name,
+      };
+    });
+
+    setWizardLoading(true);
+    try {
+      const resolved = await Promise.all(
+        entries.map(async ({ file, relativePath }) => ({
+          name: relativePath,
+          content: await file.text(),
+        })),
+      );
+      const candidates = await buildImportCandidates(resolved);
+      await openImportWizard(candidates);
+    } catch {
+      setError('Could not import folder');
+    } finally {
+      setWizardLoading(false);
+    }
   }
 
   async function handleDelete(file: FileEntry) {
@@ -728,8 +1101,8 @@ export default function Sidebar({
           <button
             onClick={() => fileInputRef.current?.click()}
             className="text-gray-400 hover:text-white disabled:text-gray-600 disabled:cursor-not-allowed transition-colors"
-            title={selectedFile ? 'Clear the current selection to upload files' : 'Upload file'}
-            aria-label="Upload file"
+            title={selectedFile ? 'Clear the current selection to import files' : 'Import markdown files'}
+            aria-label="Import files"
             disabled={Boolean(selectedFile)}
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -743,6 +1116,39 @@ export default function Sidebar({
             multiple
             className="hidden"
             onChange={handleFileUpload}
+          />
+          <button
+            onClick={() => zipInputRef.current?.click()}
+            className="text-gray-400 hover:text-white disabled:text-gray-600 disabled:cursor-not-allowed transition-colors"
+            title={selectedFile ? 'Clear the current selection to import ZIP files' : 'Import ZIP'}
+            aria-label="Import ZIP"
+            disabled={Boolean(selectedFile)}
+          >
+            <span className="text-[10px] font-semibold">ZIP</span>
+          </button>
+          <input
+            ref={zipInputRef}
+            type="file"
+            accept=".zip,application/zip"
+            className="hidden"
+            onChange={handleZipUpload}
+          />
+          <button
+            onClick={() => folderInputRef.current?.click()}
+            className="text-gray-400 hover:text-white disabled:text-gray-600 disabled:cursor-not-allowed transition-colors"
+            title={selectedFile ? 'Clear the current selection to import a folder' : 'Import folder'}
+            aria-label="Import folder"
+            disabled={Boolean(selectedFile)}
+          >
+            <span className="text-[10px] font-semibold">DIR</span>
+          </button>
+          <input
+            ref={folderInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={handleFolderUpload}
+            {...({ webkitdirectory: '' } as React.InputHTMLAttributes<HTMLInputElement>)}
           />
           <button
             onClick={() => {
@@ -929,6 +1335,58 @@ export default function Sidebar({
       {error && (
         <div className="mx-3 mt-2 px-3 py-2 bg-red-900/50 border border-red-700 rounded text-xs text-red-300">
           {error}
+        </div>
+      )}
+
+      {wizardLoading && (
+        <div className="mx-3 mt-2 px-3 py-2 bg-blue-950/50 border border-blue-800 rounded text-xs text-blue-300">
+          Preparing import…
+        </div>
+      )}
+
+      {importWizard && (
+        <div className="mx-3 mt-2 p-3 border border-blue-700/70 bg-blue-950/30 rounded text-xs space-y-2">
+          <div className="font-semibold text-blue-200">Import wizard</div>
+          <div className="text-blue-100/90">
+            {importWizard.candidates.length} file(s) detected. Structure inferred from paths before import.
+          </div>
+          <input
+            type="text"
+            value={importTemplate}
+            onChange={(e) => setImportTemplate(e.target.value)}
+            placeholder="chapter-{n}-r{rev}.md"
+            className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
+          />
+          <div className="text-[11px] text-blue-200/80">
+            Template tokens: {'{n}'}, {'{rev}'}, {'{basename}'}, {'{document}'}, {'{chapter}'}
+          </div>
+          <div className="max-h-24 overflow-y-auto text-[11px] text-gray-300 border border-gray-800 rounded p-2 bg-gray-900/50">
+            {importWizard.candidates.slice(0, 8).map((candidate, index) => (
+              <div key={`${candidate.originalPath}-${index}`} className="truncate">
+                {candidate.originalPath} → {applyRenameTemplate(importTemplate, index, candidate.name, candidate.inferredDocument, candidate.inferredChapter)}
+              </div>
+            ))}
+            {importWizard.candidates.length > 8 && (
+              <div className="text-gray-400 mt-1">…and {importWizard.candidates.length - 8} more</div>
+            )}
+          </div>
+          <div className="text-[11px] text-amber-200/90">
+            Duplicate groups in batch (by content hash): {Object.values(importWizard.duplicateByHash).filter((group) => group.length > 1).length}
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={confirmImportFromWizard}
+              className="text-xs px-2 py-1 bg-blue-600 hover:bg-blue-500 rounded transition-colors"
+            >
+              Import now
+            </button>
+            <button
+              onClick={() => setImportWizard(null)}
+              className="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
 

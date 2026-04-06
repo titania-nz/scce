@@ -11,11 +11,14 @@ export interface DiffLine {
 
 export interface DiffHunk {
   id: number;
+  start: number;
+  end: number;
   lines: DiffLine[];
 }
 
 export interface ComputedDiff {
   hunks: DiffHunk[];
+  flatLines: DiffLine[];
   totalAdditions: number;
   totalRemovals: number;
   isIdentical: boolean;
@@ -65,7 +68,9 @@ export function computeDiff(a: string, b: string): ComputedDiff {
   }
 
   const isIdentical = totalAdditions === 0 && totalRemovals === 0;
-  if (isIdentical) return { hunks: [], totalAdditions: 0, totalRemovals: 0, isIdentical: true };
+  if (isIdentical) {
+    return { hunks: [], flatLines: flat, totalAdditions: 0, totalRemovals: 0, isIdentical: true };
+  }
 
   // Find indices of all changed lines
   const changedIndices: number[] = [];
@@ -88,10 +93,12 @@ export function computeDiff(a: string, b: string): ComputedDiff {
 
   const hunks: DiffHunk[] = windows.map(([start, end], id) => ({
     id,
+    start,
+    end,
     lines: flat.slice(start, end + 1),
   }));
 
-  return { hunks, totalAdditions, totalRemovals, isIdentical };
+  return { hunks, flatLines: flat, totalAdditions, totalRemovals, isIdentical };
 }
 
 // Public hook/helper: called from UI code to encapsulate shared stateful behavior.
