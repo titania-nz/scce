@@ -53,7 +53,7 @@ export async function listNoteFiles(): Promise<FileEntry[]> {
     const store = getBlobStore();
     if (!store) return [];
     const { blobs } = await store.list();
-    const files = await Promise.all(
+    const files: Array<FileEntry | null> = await Promise.all(
       blobs
         .filter(
           (blob) =>
@@ -64,6 +64,14 @@ export async function listNoteFiles(): Promise<FileEntry[]> {
             VALID_FILENAME.test(blob.key),
         )
         .map(async (blob) => {
+          // Netlify Blob listings can outlive a missing content record briefly.
+          // Verify the note still exists so the UI does not surface ghost files
+          // that would immediately 404 when opened.
+          const content = await store.get(blob.key).catch(() => null);
+          if (!content) {
+            return null;
+          }
+
           const meta = await readBlobFileMeta(blob.key);
           const fallback = nowIso();
           return {
@@ -75,7 +83,9 @@ export async function listNoteFiles(): Promise<FileEntry[]> {
         }),
     );
 
-    return files.sort((a, b) => a.name.localeCompare(b.name));
+    return files
+      .filter((file): file is FileEntry => file !== null)
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
 
   const dir = getNotesDir();

@@ -193,7 +193,7 @@ function writeLocalJson<T>(storageKey: string, value: T): void {
 
 // Main component export: this is the entry point rendered by parent routes/components.
 export default function EditorPage() {
-  const { files, createFile, renameFile } = useFiles();
+  const { files, createFile, renameFile, mutate: mutateFiles } = useFiles();
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [content, setContent] = useState('');
   const [isDirty, setIsDirty] = useState(false);
@@ -523,12 +523,6 @@ export default function EditorPage() {
       return;
     }
 
-    const fileStillExists = files.some((file) => file.name === selectedFile);
-    if (fileStillExists) {
-      setOpsError(`Could not load "${selectedFile}".`);
-      return;
-    }
-
     if (hasLocalOnlyDraft) {
       setOpsError(null);
       setPublishHistory([]);
@@ -549,7 +543,14 @@ export default function EditorPage() {
     setPublishMessage('');
     setLatestRevisionStatus('');
     setOpsError(`"${selectedFile}" no longer exists.`);
-  }, [fileLoadError, files, hasLocalOnlyDraft, selectedFile]);
+    void mutateFiles(
+      (current) => ({
+        files: (current?.files ?? []).filter((file) => file.name !== selectedFile),
+        folders: current?.folders ?? [],
+      }),
+      { revalidate: false },
+    );
+  }, [fileLoadError, hasLocalOnlyDraft, mutateFiles, selectedFile]);
 
   const { isSaving, saveNow } = useAutoSave({
     content,
