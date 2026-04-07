@@ -6,6 +6,7 @@ interface ToolbarProps {
   isSaving: boolean;
   lastCheckpointAt: string | null;
   isSidebarOpen: boolean;
+  isInspectorOpen: boolean;
   isOffline: boolean;
   queuedSyncCount: number;
   mobileView: 'edit' | 'preview';
@@ -19,6 +20,7 @@ interface ToolbarProps {
   onOpenStorageHealth: () => void;
   onExportBackup: () => void;
   onToggleSidebar: () => void;
+  onToggleInspector: () => void;
   onWorkspaceModeChange: (mode: 'editor' | 'compare' | 'documents') => void;
   isUtilitiesOpen: boolean;
   onToggleUtilities: () => void;
@@ -40,6 +42,7 @@ export default function Toolbar({
   isSaving,
   lastCheckpointAt,
   isSidebarOpen,
+  isInspectorOpen,
   isOffline,
   queuedSyncCount,
   mobileView,
@@ -53,11 +56,13 @@ export default function Toolbar({
   onOpenStorageHealth,
   onExportBackup,
   onToggleSidebar,
+  onToggleInspector,
   onWorkspaceModeChange,
   isUtilitiesOpen,
   onToggleUtilities,
 }: ToolbarProps) {
   const sidebarToggleLabel = isSidebarOpen ? 'Collapse sidebar' : 'Expand sidebar';
+  const inspectorToggleLabel = isInspectorOpen ? 'Hide inspector' : 'Show inspector';
 
   return (
     <div className="flex items-center gap-2 px-3 h-12 bg-gray-800 border-b border-gray-700 shrink-0">
@@ -114,6 +119,21 @@ export default function Toolbar({
           </button>
         ))}
       </div>
+
+      <button
+        onClick={onToggleInspector}
+        className={`hidden lg:inline-flex px-2.5 py-1 text-xs rounded transition-colors shrink-0 ${
+          workspaceMode !== 'editor'
+            ? 'pointer-events-none opacity-50'
+            : isInspectorOpen
+              ? 'bg-blue-600 text-white'
+              : 'bg-gray-700 text-gray-200 hover:bg-gray-600'
+        }`}
+        disabled={workspaceMode !== 'editor'}
+        title={workspaceMode !== 'editor' ? 'Inspector is only available in Editor view' : inspectorToggleLabel}
+      >
+        Inspector
+      </button>
 
       <div className="relative shrink-0">
         <button

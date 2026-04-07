@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { deleteNoteFile, readNoteFile, renameNoteFile, writeNoteFile } from '@/lib/noteContentStorage';
 import { deleteFileCategory, readFileCategory, renameFileCategory, writeFileCategory } from '@/lib/fileCategoryStorage';
+import { appendImmutableRevision, createDocumentRootRecord } from '@/lib/documentStorage';
 import { deleteRevisions, readRevisions, renameRevisions, writeRevisions } from '@/lib/revisionStorage';
 import { deletePublishHistory, renamePublishHistory } from '@/lib/publishStorage';
 import { parseFilename } from '@/lib/parseFilename';
@@ -60,6 +61,10 @@ function parseCategory(input: unknown): FileCategory | null {
     chapter: chapter || 'General',
     isPrimary,
   };
+}
+
+function buildLegacyDocumentId(filename: string): string {
+  return `legacy-${Buffer.from(filename).toString('base64url')}`;
 }
 
 // API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
@@ -161,6 +166,30 @@ export async function PUT(request: NextRequest, { params }: Params) {
 
       if (shouldAppendRevision) {
         await writeRevisions(filename, updatedRevisions);
+        const latestRevision = updatedRevisions.at(-1);
+
+        if (latestRevision) {
+          const documentId = buildLegacyDocumentId(filename);
+
+          try {
+            await createDocumentRootRecord({
+              id: documentId,
+              name: filename,
+              sourceFilename: filename,
+            });
+          } catch (err: unknown) {
+            const e = err as { status?: number };
+            if (e.status !== 409) {
+              throw err;
+            }
+          }
+
+          await appendImmutableRevision(documentId, {
+            content,
+            createdAt: latestRevision.createdAt,
+            status,
+          });
+        }
       }
 
       return NextResponse.json({ name: filename, revisions: updatedRevisions });

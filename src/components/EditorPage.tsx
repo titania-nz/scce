@@ -162,10 +162,18 @@ function eventToShortcut(event: KeyboardEvent): string {
 }
 
 const LOCAL_DRAFT_KEY = 'scce:working-drafts:v1';
+const LOCAL_DRAFT_META_KEY = 'scce:working-draft-meta:v1';
 const LOCAL_QUEUE_KEY = 'scce:checkpoint-queue:v1';
 const DESKTOP_SIDEBAR_OPEN_KEY = 'scce:desktop-sidebar-open:v1';
+const DESKTOP_INSPECTOR_OPEN_KEY = 'scce:desktop-inspector-open:v1';
 const MISSING_FILE_PROBE_ATTEMPTS = 4;
 const MISSING_FILE_PROBE_DELAY_MS = 250;
+
+interface DraftMeta {
+  note: string;
+  tagsInput: string;
+  status: RevisionStatus | '';
+}
 
 interface QueuedCheckpoint {
   id: string;
@@ -204,6 +212,7 @@ export default function EditorPage() {
   const [mobileView, setMobileView] = useState<'edit' | 'preview'>('edit');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [desktopSidebarOpen, setDesktopSidebarOpen] = useState(true);
+  const [desktopInspectorOpen, setDesktopInspectorOpen] = useState(true);
   const [isDesktopViewport, setIsDesktopViewport] = useState(false);
   const [workspaceMode, setWorkspaceMode] = useState<'editor' | 'compare' | 'documents'>('editor');
   const [inspectorTab, setInspectorTab] = useState<'checkpoint' | 'timeline' | 'publish' | 'links'>('checkpoint');
@@ -220,6 +229,7 @@ export default function EditorPage() {
   const [inlineNoteLine, setInlineNoteLine] = useState('');
   const [timelineError, setTimelineError] = useState<string | null>(null);
   const [workingDraftByFile, setWorkingDraftByFile] = useState<Record<string, string>>({});
+  const [draftMetaByFile, setDraftMetaByFile] = useState<Record<string, DraftMeta>>({});
   const [lastCheckpointAtByFile, setLastCheckpointAtByFile] = useState<Record<string, string>>({});
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState('');
@@ -267,6 +277,7 @@ export default function EditorPage() {
     isLoading: isDocumentsLoading,
     promoteRevision,
     addComment,
+    mutate: mutateDocuments,
   } = useDocuments();
   const prevFileRef = useRef<string | null>(null);
   const latestRevision = revisions.at(-1);
@@ -281,6 +292,7 @@ export default function EditorPage() {
     [],
   );
   const isSidebarVisible = isDesktopViewport ? desktopSidebarOpen : sidebarOpen;
+  const isInspectorVisible = desktopInspectorOpen && workspaceMode === 'editor';
   const missingRequiredFields = useMemo(() => {
     const missing: string[] = [];
     if (requiredFields.note && revisionNote.trim().length === 0) missing.push('Note');
@@ -383,6 +395,14 @@ export default function EditorPage() {
   }, [desktopSidebarOpen]);
 
   useEffect(() => {
+    setDesktopInspectorOpen(readLocalJson<boolean>(DESKTOP_INSPECTOR_OPEN_KEY, true));
+  }, []);
+
+  useEffect(() => {
+    writeLocalJson(DESKTOP_INSPECTOR_OPEN_KEY, desktopInspectorOpen);
+  }, [desktopInspectorOpen]);
+
+  useEffect(() => {
     if (typeof window === 'undefined') return;
 
     const mediaQuery = window.matchMedia('(min-width: 768px)');
@@ -405,7 +425,9 @@ export default function EditorPage() {
     setIsOffline(initialOffline);
     setQueuedCheckpoints(readLocalJson<QueuedCheckpoint[]>(LOCAL_QUEUE_KEY, []));
     const drafts = readLocalJson<Record<string, string>>(LOCAL_DRAFT_KEY, {});
+    const draftMeta = readLocalJson<Record<string, DraftMeta>>(LOCAL_DRAFT_META_KEY, {});
     setWorkingDraftByFile(drafts);
+    setDraftMetaByFile(draftMeta);
     setRecoverableDrafts(drafts);
     setShowRecoveryPanel(Object.keys(drafts).length > 0);
     hasLoadedLocalStateRef.current = true;
@@ -433,6 +455,11 @@ export default function EditorPage() {
 
   useEffect(() => {
     if (!hasLoadedLocalStateRef.current) return;
+    writeLocalJson(LOCAL_DRAFT_META_KEY, draftMetaByFile);
+  }, [draftMetaByFile]);
+
+  useEffect(() => {
+    if (!hasLoadedLocalStateRef.current) return;
     writeLocalJson(LOCAL_QUEUE_KEY, queuedCheckpoints);
   }, [queuedCheckpoints]);
 
@@ -443,6 +470,21 @@ export default function EditorPage() {
         return prev;
       }
       return { ...prev, [selectedFile]: draftContent };
+    });
+  }, [selectedFile]);
+
+  const saveDraftMeta = useCallback((nextMeta: DraftMeta) => {
+    if (!selectedFile) return;
+    setDraftMetaByFile((prev) => {
+      const current = prev[selectedFile];
+      if (
+        current?.note === nextMeta.note &&
+        current?.tagsInput === nextMeta.tagsInput &&
+        current?.status === nextMeta.status
+      ) {
+        return prev;
+      }
+      return { ...prev, [selectedFile]: nextMeta };
     });
   }, [selectedFile]);
 
@@ -470,9 +512,10 @@ export default function EditorPage() {
     if (selectedFile !== prevFileRef.current) {
       prevFileRef.current = selectedFile;
       const currentLatestRevision = revisions.at(-1);
-      setRevisionNote(currentLatestRevision?.note ?? '');
-      setStatus(currentLatestRevision?.status ?? '');
-      setTagsInput((currentLatestRevision?.tags ?? []).join(', '));
+      const draftMeta = selectedFile ? draftMetaByFile[selectedFile] : undefined;
+      setRevisionNote(draftMeta?.note ?? currentLatestRevision?.note ?? '');
+      setStatus(draftMeta?.status ?? currentLatestRevision?.status ?? '');
+      setTagsInput(draftMeta?.tagsInput ?? (currentLatestRevision?.tags ?? []).join(', '));
 
       if (!selectedFile) {
         setContent('');
@@ -494,7 +537,7 @@ export default function EditorPage() {
         setIsDirty(false);
       }
     }
-  }, [loadedContent, revisions, selectedFile, workingDraftByFile]);
+  }, [draftMetaByFile, loadedContent, revisions, selectedFile, workingDraftByFile]);
 
   useEffect(() => {
     setSelectedRevisionIds((prev) => prev.filter((id) => revisions.some((revision) => revision.id === id)).slice(-2));
@@ -679,6 +722,7 @@ export default function EditorPage() {
           tags: parsedTags,
           status: status || undefined,
         });
+        await mutateDocuments();
       } catch (err: unknown) {
         const maybeNetworkError = err as { message?: string };
         if (maybeNetworkError?.message?.toLowerCase().includes('fetch')) {
@@ -689,6 +733,11 @@ export default function EditorPage() {
         throw err;
       }
       setWorkingDraftByFile((prev) => {
+        const next = { ...prev };
+        delete next[selectedFile];
+        return next;
+      });
+      setDraftMetaByFile((prev) => {
         const next = { ...prev };
         delete next[selectedFile];
         return next;
@@ -800,6 +849,7 @@ export default function EditorPage() {
             tags: item.tags,
             status: item.status,
           });
+          await mutateDocuments();
           setQueuedCheckpoints((prev) => prev.filter((queued) => queued.id !== item.id));
         } catch (err: unknown) {
           const e = err as { message?: string };
@@ -867,9 +917,15 @@ export default function EditorPage() {
         tags: latestRevision.tags ?? [],
         status: 'Writing',
       });
+      await mutateDocuments();
       setRevisionNote(nextNote);
       setTagsInput((latestRevision.tags ?? []).join(', '));
       setStatus('Writing');
+      saveDraftMeta({
+        note: nextNote,
+        tagsInput: (latestRevision.tags ?? []).join(', '),
+        status: 'Writing',
+      });
       setContent(latestRevision.content);
       setIsDirty(false);
       setWorkingDraftByFile((prev) => {
@@ -883,7 +939,7 @@ export default function EditorPage() {
     } catch (error) {
       setOpsError(error instanceof Error ? error.message : 'Could not create a new version from the locked revision.');
     }
-  }, [isOffline, latestRevision, saveContent, selectedFile]);
+  }, [isOffline, latestRevision, mutateDocuments, saveContent, selectedFile]);
 
   // Keyboard shortcuts
   const handleRestoreDraft = useCallback((filename: string) => {
@@ -1063,6 +1119,10 @@ export default function EditorPage() {
     setSidebarOpen((open) => !open);
   }
 
+  function handleInspectorToggle() {
+    setDesktopInspectorOpen((open) => !open);
+  }
+
   function handleFileDeleted(filename: string) {
     if (selectedFile === filename) {
       setSelectedFile(null);
@@ -1084,6 +1144,13 @@ export default function EditorPage() {
       return next;
     });
 
+    setDraftMetaByFile((prev) => {
+      if (!(filename in prev)) return prev;
+      const next = { ...prev };
+      delete next[filename];
+      return next;
+    });
+
     setLastCheckpointAtByFile((prev) => {
       if (!(filename in prev)) return prev;
       const next = { ...prev };
@@ -1098,6 +1165,13 @@ export default function EditorPage() {
     }
 
     setWorkingDraftByFile((prev) => {
+      if (!(oldName in prev)) return prev;
+      const next = { ...prev, [newName]: prev[oldName] };
+      delete next[oldName];
+      return next;
+    });
+
+    setDraftMetaByFile((prev) => {
       if (!(oldName in prev)) return prev;
       const next = { ...prev, [newName]: prev[oldName] };
       delete next[oldName];
@@ -1303,6 +1377,7 @@ export default function EditorPage() {
           isSaving={isSaving}
           lastCheckpointAt={lastCheckpointAt}
           isSidebarOpen={isSidebarVisible}
+          isInspectorOpen={isInspectorVisible}
           isOffline={isOffline}
           queuedSyncCount={queuedCheckpoints.length}
           mobileView={mobileView}
@@ -1331,6 +1406,7 @@ export default function EditorPage() {
             void handleExportBackup();
           }}
           onToggleSidebar={handleSidebarToggle}
+          onToggleInspector={handleInspectorToggle}
           onWorkspaceModeChange={setWorkspaceMode}
           isUtilitiesOpen={utilitiesOpen}
           onToggleUtilities={() => setUtilitiesOpen((open) => !open)}
@@ -1391,8 +1467,21 @@ export default function EditorPage() {
               </div>
             </div>
 
-            <aside className="hidden lg:flex w-80 border-l border-gray-700 bg-gray-900/70 flex-col overflow-hidden">
+            {isInspectorVisible && (
+              <aside className="hidden lg:flex w-80 border-l border-gray-700 bg-gray-900/70 flex-col overflow-hidden">
               <div className="border-b border-gray-700 p-2">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Inspector</span>
+                  <button
+                    type="button"
+                    onClick={handleInspectorToggle}
+                    className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-[11px] text-gray-300 hover:bg-gray-700 hover:text-white"
+                    aria-label="Close inspector"
+                    title="Close inspector"
+                  >
+                    Close
+                  </button>
+                </div>
                 <div className="grid grid-cols-4 gap-1">
                   {([
                     ['checkpoint', 'Checkpoint'],
@@ -1434,7 +1523,22 @@ export default function EditorPage() {
                         <textarea
                           className="mt-1 w-full bg-gray-800 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-100 resize-y min-h-20"
                           value={revisionNote}
-                          onChange={(e) => setRevisionNote(e.target.value)}
+                          onChange={(e) => {
+                            const nextNote = e.target.value;
+                            setRevisionNote(nextNote);
+                            saveDraftMeta({
+                              note: nextNote,
+                              tagsInput,
+                              status,
+                            });
+                          }}
+                          onBlur={() => {
+                            saveDraftMeta({
+                              note: revisionNote,
+                              tagsInput,
+                              status,
+                            });
+                          }}
                           placeholder="Why this revision exists..."
                         />
                       </label>
@@ -1444,7 +1548,22 @@ export default function EditorPage() {
                         <select
                           className="mt-1 w-full bg-gray-800 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-100"
                           value={status}
-                          onChange={(e) => setStatus((e.target.value as RevisionStatus) || '')}
+                          onChange={(e) => {
+                            const nextStatus = (e.target.value as RevisionStatus) || '';
+                            setStatus(nextStatus);
+                            saveDraftMeta({
+                              note: revisionNote,
+                              tagsInput,
+                              status: nextStatus,
+                            });
+                          }}
+                          onBlur={() => {
+                            saveDraftMeta({
+                              note: revisionNote,
+                              tagsInput,
+                              status,
+                            });
+                          }}
                         >
                           <option value="">No status</option>
                           {statusOptions.map((option) => (
@@ -1458,7 +1577,22 @@ export default function EditorPage() {
                         <input
                           className="mt-1 w-full bg-gray-800 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-100"
                           value={tagsInput}
-                          onChange={(e) => setTagsInput(e.target.value)}
+                          onChange={(e) => {
+                            const nextTagsInput = e.target.value;
+                            setTagsInput(nextTagsInput);
+                            saveDraftMeta({
+                              note: revisionNote,
+                              tagsInput: nextTagsInput,
+                              status,
+                            });
+                          }}
+                          onBlur={() => {
+                            saveDraftMeta({
+                              note: revisionNote,
+                              tagsInput,
+                              status,
+                            });
+                          }}
                           placeholder="planning, scope"
                           list="known-tags"
                         />
@@ -1616,7 +1750,8 @@ export default function EditorPage() {
                   </>
                 )}
               </div>
-            </aside>
+              </aside>
+            )}
           </div>
         )}
       </div>

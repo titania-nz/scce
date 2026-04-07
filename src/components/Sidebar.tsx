@@ -337,6 +337,10 @@ function joinFilePath(folderPath: string | null, fileName: string): string {
   return folderPath ? `${folderPath}/${trimmed}` : trimmed;
 }
 
+function buildArchivePath(fileName: string): string {
+  return `archive/${fileName.replace(/^\/+/, '')}`;
+}
+
 function createFolderTree(items: VisibleFileItem[], explicitFolders: string[]): { folders: FileTreeNode[]; rootFiles: VisibleFileItem[] } {
   const folderMap = new Map<string, FileTreeNode>();
   const rootFolders: FileTreeNode[] = [];
@@ -1004,6 +1008,23 @@ export default function Sidebar({
     }
   }
 
+  async function handleArchive(file: FileEntry) {
+    const archiveTarget = findAvailableVersionedFilename(
+      buildArchivePath(file.name),
+      files.map((entry) => entry.name),
+    );
+    if (!confirm(`Archive "${file.name}" to "${archiveTarget}"?`)) return;
+
+    setError(null);
+    try {
+      await renameFile(file.name, archiveTarget);
+      onFileRenamed(file.name, archiveTarget);
+    } catch (err: unknown) {
+      const error = err as { message?: string };
+      setError(error.message ?? 'Could not archive file');
+    }
+  }
+
   function toggleFileSelection(filename: string) {
     setSelectedFiles((prev) => {
       const next = new Set(prev);
@@ -1384,6 +1405,21 @@ export default function Sidebar({
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      void handleArchive(revision.file);
+                    }}
+                    className="text-gray-400 hover:text-amber-300 p-0.5"
+                    title="Archive"
+                    aria-label={`Archive ${revision.file.name}`}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8h14M7 8V6a1 1 0 011-1h8a1 1 0 011 1v2m-9 4h8m-8 4h5m-8 5h14a2 2 0 002-2V8H3v11a2 2 0 002 2z" />
                     </svg>
                   </button>
                   <button
