@@ -34,7 +34,7 @@ export interface FileCategory {
   chapter: string;
 }
 
-export type RevisionStatus = string;
+export type RevisionStatus = 'Writing' | 'Editing' | 'Locked';
 
 export interface RevisionInlineNote {
   id: string;
@@ -175,6 +175,7 @@ export interface DocumentRevision {
   documentId: string;
   createdAt: string;
   content: string;
+  status?: RevisionStatus;
   notes: RevisionNote[];
   collaboration: CollaborationState;
 }

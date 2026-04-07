@@ -4,20 +4,21 @@ import { deleteFileCategory, readFileCategory, renameFileCategory, writeFileCate
 import { deleteRevisions, readRevisions, renameRevisions, writeRevisions } from '@/lib/revisionStorage';
 import { deletePublishHistory, renamePublishHistory } from '@/lib/publishStorage';
 import { parseFilename } from '@/lib/parseFilename';
+import { isRevisionStatus } from '@/lib/revisionStatus';
 import { FileCategory, Revision } from '@/types';
 
 type Params = { params: Promise<{ filename: string[] }> };
 
 // Helper function: keeps a small, testable transformation isolated from UI side effects.
-function parseStatus(input: unknown): string | undefined {
+function parseStatus(input: unknown) {
   if (input === undefined || input === null || input === '') return undefined;
   if (typeof input !== 'string') {
     throw Object.assign(new Error('Invalid status'), { status: 400 });
   }
   const normalized = input.trim();
   if (!normalized) return undefined;
-  if (normalized.length > 80) {
-    throw Object.assign(new Error('Status is too long'), { status: 400 });
+  if (!isRevisionStatus(normalized)) {
+    throw Object.assign(new Error('Status must be Writing, Editing, or Locked'), { status: 400 });
   }
   return normalized;
 }

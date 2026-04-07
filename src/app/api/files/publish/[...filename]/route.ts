@@ -69,7 +69,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
 
     return NextResponse.json({
       name: filename,
-      canPublish: latest?.status === 'accepted',
+      canPublish: latest?.status === 'Locked',
       latestRevisionId: latest?.id ?? null,
       latestRevisionStatus: latest?.status,
       profiles: PROFILES,
@@ -110,7 +110,7 @@ export async function POST(request: NextRequest, { params }: Params) {
         createdAt: new Date().toISOString(),
         content: target.contentSnapshot,
         note: `Rollback to publish ${target.id}`,
-        status: 'needs-review',
+        status: 'Editing',
         tags: ['rollback', 'published-history'],
       };
       await writeRevisions(filename, [...revisions, rollbackRevision]);
@@ -139,8 +139,8 @@ export async function POST(request: NextRequest, { params }: Params) {
       return NextResponse.json({ error: 'No revisions available for publishing' }, { status: 400 });
     }
 
-    if (latest.status !== 'accepted') {
-      return NextResponse.json({ error: 'Only accepted revisions can be published' }, { status: 409 });
+    if (latest.status !== 'Locked') {
+      return NextResponse.json({ error: 'Only locked revisions can be published' }, { status: 409 });
     }
 
     const profile = findProfile(body.profileId);
