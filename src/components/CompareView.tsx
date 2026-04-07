@@ -19,6 +19,9 @@ interface CompareViewProps {
 
 type PostMergeAction = 'keep' | 'archive' | 'delete';
 type MergedOutputView = 'raw' | 'rich';
+type CompareLayoutMode = 'stacked' | 'split';
+
+const COMPARE_LAYOUT_STORAGE_KEY = 'scce:compare-layout-mode:v1';
 
 function buildArchivePath(filename: string): string {
   return `archive/${filename}`;
@@ -49,6 +52,7 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
   const [mergedOutputView, setMergedOutputView] = useState<MergedOutputView>('raw');
+  const [layoutMode, setLayoutMode] = useState<CompareLayoutMode>('stacked');
   const [activeHunkId, setActiveHunkId] = useState<number | null>(null);
   const [isMergeConfigCollapsed, setIsMergeConfigCollapsed] = useState(false);
   const pendingSaveRef = useRef<{ filename: string; content: string } | null>(null);
@@ -178,6 +182,19 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
   useEffect(() => {
     setUnresolvedHunks(unresolvedCount);
   }, [unresolvedCount]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const saved = window.localStorage.getItem(COMPARE_LAYOUT_STORAGE_KEY);
+    if (saved === 'stacked' || saved === 'split') {
+      setLayoutMode(saved);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(COMPARE_LAYOUT_STORAGE_KEY, layoutMode);
+  }, [layoutMode]);
 
   async function handleFinalize() {
     if (!bothSelected) {
@@ -502,7 +519,11 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
           Loading...
         </div>
       ) : (
-        <>
+        <div
+          className={`min-h-0 flex-1 overflow-hidden ${
+            layoutMode === 'split' ? 'flex flex-col xl:flex-row' : 'flex flex-col'
+          }`}
+        >
           <DiffView
             contentA={effectiveContentA}
             contentB={effectiveContentB}
@@ -539,10 +560,35 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
               console.info('Merged output ready', { mergedOutput });
             }}
           />
-          <div className="shrink-0 border-t border-gray-700 bg-gray-900 p-3">
+          <div
+            className={`min-h-0 bg-gray-900 p-3 ${
+              layoutMode === 'split'
+                ? 'flex flex-1 flex-col border-t border-gray-700 xl:border-t-0 xl:border-l'
+                : 'shrink-0 border-t border-gray-700'
+            }`}
+          >
             <div className="mb-1 flex items-center justify-between text-xs">
               <span className="font-semibold text-gray-300">Merged Output Preview</span>
               <div className="flex items-center gap-2">
+                <div className="flex items-center rounded border border-gray-700 bg-gray-950 p-0.5">
+                  {([
+                    ['stacked', 'Top / Bottom'],
+                    ['split', 'Side by Side'],
+                  ] as const).map(([view, label]) => (
+                    <button
+                      key={view}
+                      type="button"
+                      onClick={() => setLayoutMode(view)}
+                      className={`rounded px-2 py-1 transition-colors ${
+                        layoutMode === view
+                          ? 'bg-blue-600 text-white'
+                          : 'text-gray-300 hover:bg-gray-800'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
                 <div className="flex items-center rounded border border-gray-700 bg-gray-950 p-0.5">
                   {([
                     ['raw', 'MD Raw'],
@@ -567,7 +613,11 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
                 </span>
               </div>
             </div>
-            <div className="h-72 overflow-hidden rounded border border-gray-700 bg-gray-950">
+            <div
+              className={`overflow-hidden rounded border border-gray-700 bg-gray-950 ${
+                layoutMode === 'split' ? 'min-h-0 flex-1' : 'h-72'
+              }`}
+            >
               {mergedOutputView === 'raw' ? (
                 <div ref={mergedPreviewRef} className="h-full overflow-y-auto font-mono text-xs text-gray-200">
                   {mergedOutputLines.map((line, index) => {
@@ -596,13 +646,13 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
                   })}
                 </div>
               ) : (
-                <div className="flex h-full flex-col">
+                <div className="flex h-full min-h-0 flex-col">
                   <PreviewPane content={mergedOutput} scrollToText={activeMergedPreviewText} />
                 </div>
               )}
             </div>
           </div>
-        </>
+        </div>
       )}
     </div>
   );
