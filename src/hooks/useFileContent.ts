@@ -39,14 +39,33 @@ interface SaveContentOptions {
 }
 
 // Keep all "open file" data loading and save actions in one reusable hook.
-export function useFileContent(filename: string | null, revisionId?: string | null) {
+export function useFileContent(filename: string | null, revisionId?: string | null, allowMissing = false) {
   const key = filename
     ? `${buildFileApiPath(filename)}${revisionId ? `?revisionId=${encodeURIComponent(revisionId)}` : ''}`
     : null;
-  const { data, error, isLoading, mutate } = useSWR<FileContentResponse>(key, fetcher, {
+  const { data, error, isLoading, mutate } = useSWR<FileContentResponse>(
+    key,
+    async (url: string) => {
+      try {
+        return await fetcher(url);
+      } catch (error) {
+        if (allowMissing && filename && error instanceof FileRequestError && error.status === 404) {
+          return {
+            name: filename,
+            content: '',
+            revisions: [],
+            revisionId: null,
+            currentDraftRevisionId: null,
+          } satisfies FileContentResponse;
+        }
+        throw error;
+      }
+    },
+    {
     revalidateOnFocus: false,
     shouldRetryOnError: (err) => !(err instanceof FileRequestError && err.status >= 400 && err.status < 500),
-  });
+    },
+  );
 
   // Save the current editor text as the newest revision for this file.
   async function saveContent(content: string, options: SaveContentOptions = {}): Promise<void> {

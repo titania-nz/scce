@@ -799,27 +799,9 @@ export default function Sidebar({
     setError(null);
     let lastCreated: string | null = null;
     const takenNames = new Set(files.map((file) => file.name));
-    const existingHashes = new Map<string, string>();
-
-    await Promise.all(
-      files.map(async (file) => {
-        try {
-          const res = await fetch(buildFileApiPath(file.name));
-          if (!res.ok) return;
-          const payload = (await res.json()) as { content?: string };
-          const content = payload.content ?? '';
-          existingHashes.set(await hashContent(content), file.name);
-        } catch {
-          // Skip hash lookup failures for existing files.
-        }
-      }),
-    );
 
     for (let index = 0; index < importWizard.candidates.length; index += 1) {
       const candidate = importWizard.candidates[index];
-      if (existingHashes.has(candidate.hash)) {
-        continue;
-      }
       const templated = applyRenameTemplate(
         importTemplate,
         index,

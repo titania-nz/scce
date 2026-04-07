@@ -240,6 +240,9 @@ export default function EditorPage() {
   const [publishMessage, setPublishMessage] = useState<string>('');
   const [jumpToHeadingToken, setJumpToHeadingToken] = useState<string>('');
   const [fileFilter, setFileFilter] = useState({ chapterSearch: '', metaSearch: '', dateFrom: '', dateTo: '' });
+  const hasLocalOnlyDraft = selectedFile
+    ? typeof workingDraftByFile[selectedFile] === 'string' || typeof recoverableDrafts[selectedFile] === 'string'
+    : false;
 
   const {
     content: loadedContent,
@@ -248,7 +251,7 @@ export default function EditorPage() {
     error: fileLoadError,
     saveContent,
     updateRevisionInlineNotes,
-  } = useFileContent(selectedFile);
+  } = useFileContent(selectedFile, null, hasLocalOnlyDraft);
   const {
     documents,
     isLoading: isDocumentsLoading,
@@ -526,6 +529,15 @@ export default function EditorPage() {
       return;
     }
 
+    if (hasLocalOnlyDraft) {
+      setOpsError(null);
+      setPublishHistory([]);
+      setPublishProfiles([]);
+      setPublishMessage('');
+      setLatestRevisionStatus('');
+      return;
+    }
+
     setSelectedFile(null);
     setContent('');
     setIsDirty(false);
@@ -537,7 +549,7 @@ export default function EditorPage() {
     setPublishMessage('');
     setLatestRevisionStatus('');
     setOpsError(`"${selectedFile}" no longer exists.`);
-  }, [fileLoadError, files, selectedFile]);
+  }, [fileLoadError, files, hasLocalOnlyDraft, selectedFile]);
 
   const { isSaving, saveNow } = useAutoSave({
     content,

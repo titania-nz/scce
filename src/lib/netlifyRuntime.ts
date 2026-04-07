@@ -11,5 +11,5 @@ export function getBlobStore() {
   if (!isNetlifyRuntime) {
     return null;
   }
-  return getStore('files');
+  return getStore('files', { consistency: 'strong' });
 }
