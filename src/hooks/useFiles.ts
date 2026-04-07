@@ -179,18 +179,49 @@ export function useFiles() {
 
   // Save or clear a file's explicit document/chapter category.
   async function updateFileCategory(filename: string, category: FileCategory | null): Promise<FileCategory | null> {
-    const res = await fetch(buildFileApiPath(filename), {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ category }),
-    });
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.error ?? 'Could not update file category');
-    }
-    const updated = (await res.json()) as { category?: FileCategory | null };
-    await mutate();
-    return updated.category ?? null;
+    let updatedCategory: FileCategory | null = null;
+
+    await mutate(
+      async (current) => {
+        const res = await fetch(buildFileApiPath(filename), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ category }),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error ?? 'Could not update file category');
+        }
+
+        const updated = (await res.json()) as { category?: FileCategory | null };
+        updatedCategory = updated.category ?? null;
+
+        return {
+          files: sortFiles(
+            (current?.files ?? EMPTY_FILES).map((file) =>
+              file.name === filename ? { ...file, category: updatedCategory } : file,
+            ),
+          ),
+          folders: current?.folders ?? EMPTY_FOLDERS,
+        };
+      },
+      {
+        optimisticData: (current) => ({
+          files: sortFiles(
+            (current?.files ?? EMPTY_FILES).map((file) =>
+              file.name === filename ? { ...file, category } : file,
+            ),
+          ),
+          folders: current?.folders ?? EMPTY_FOLDERS,
+        }),
+        rollbackOnError: true,
+        populateCache: true,
+        revalidate: false,
+      },
+    );
+
+    void mutate();
+    return updatedCategory;
   }
 
   async function createFolder(path: string): Promise<string[]> {

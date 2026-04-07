@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { isMissingBlobValue } from '../src/lib/blobValue.ts';
+import { isMissingBlobValue, readBlobText } from '../src/lib/blobValue.ts';
 
 const HOST = '127.0.0.1';
 const PORT = 3217;
@@ -96,6 +96,12 @@ test('blob missing helper preserves empty payloads', () => {
   assert.equal(isMissingBlobValue(new Uint8Array()), false);
 });
 
+test('blob text helper decodes string, bytes, and Blob payloads', async () => {
+  assert.equal(await readBlobText('plain text'), 'plain text');
+  assert.equal(await readBlobText(new TextEncoder().encode('byte text')), 'byte text');
+  assert.equal(await readBlobText(new Blob(['blob text'])), 'blob text');
+});
+
 test('empty files can be created, listed, opened, and renamed through the file routes', async () => {
   const originalName = 'empty-sidebar-route.md';
   const renamedName = 'empty-sidebar-route-v2.md';
@@ -167,4 +173,54 @@ test('new paste-style files open immediately after creation', async () => {
   const openPayload = (await openResponse.json()) as { name?: string; content?: string };
   assert.equal(openPayload.name, name);
   assert.equal(openPayload.content, '');
+});
+
+test('existing files can have their category updated more than once', async () => {
+  const name = 'category-update-existing-file.md';
+
+  const createResponse = await fetch(`${BASE_URL}/api/files`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: authCookie },
+    body: JSON.stringify({ name, content: '# Category test' }),
+  });
+  assert.equal(createResponse.status, 201);
+
+  const firstCategory = {
+    document: 'Ch 1 House Rules',
+    chapter: 'google-docs-paste-2026-04-07',
+  };
+  const firstUpdateResponse = await fetch(`${BASE_URL}/api/files/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Cookie: authCookie },
+    body: JSON.stringify({ category: firstCategory }),
+  });
+  assert.equal(firstUpdateResponse.status, 200);
+
+  const firstUpdatePayload = (await firstUpdateResponse.json()) as {
+    category?: { document?: string; chapter?: string } | null;
+  };
+  assert.deepEqual(firstUpdatePayload.category, firstCategory);
+
+  const secondCategory = {
+    document: 'Ch 2 Revised Rules',
+    chapter: 'merged-paste-2026-04-07',
+  };
+  const secondUpdateResponse = await fetch(`${BASE_URL}/api/files/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Cookie: authCookie },
+    body: JSON.stringify({ category: secondCategory }),
+  });
+  assert.equal(secondUpdateResponse.status, 200);
+
+  const listResponse = await fetch(`${BASE_URL}/api/files`, {
+    headers: { Cookie: authCookie },
+  });
+  assert.equal(listResponse.status, 200);
+
+  const listPayload = (await listResponse.json()) as {
+    files?: Array<{ name: string; category?: { document?: string; chapter?: string } | null }>;
+  };
+  const listedFile = listPayload.files?.find((file) => file.name === name);
+  assert.ok(listedFile, 'expected updated file to be returned in the file list');
+  assert.deepEqual(listedFile.category, secondCategory);
 });

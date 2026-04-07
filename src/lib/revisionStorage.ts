@@ -3,6 +3,7 @@ import path from 'path';
 import { getNotesDir, resolveSafePath } from '@/lib/notesPath';
 import { Revision } from '@/types';
 import { isNetlifyRuntime, getBlobStore } from '@/lib/netlifyRuntime';
+import { isMissingBlobValue, readBlobText } from '@/lib/blobValue';
 
 // Return the local folder used to store per-file revision history.
 function getRevisionsDir(): string {
@@ -55,8 +56,8 @@ export async function readRevisions(filename: string): Promise<Revision[]> {
     if (!store) return [];
     try {
       const buffer = await store.get(getRevisionBlobKey(filename));
-      if (!buffer) return [];
-      const parsed = JSON.parse(new TextDecoder().decode(buffer));
+      if (isMissingBlobValue(buffer)) return [];
+      const parsed = JSON.parse(await readBlobText(buffer));
       if (!Array.isArray(parsed)) return [];
       return parsed.map((item) => normalizeRevision(item as Revision));
     } catch {

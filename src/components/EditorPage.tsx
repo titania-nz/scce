@@ -163,6 +163,8 @@ function eventToShortcut(event: KeyboardEvent): string {
 
 const LOCAL_DRAFT_KEY = 'scce:working-drafts:v1';
 const LOCAL_QUEUE_KEY = 'scce:checkpoint-queue:v1';
+const MISSING_FILE_PROBE_ATTEMPTS = 4;
+const MISSING_FILE_PROBE_DELAY_MS = 250;
 
 interface QueuedCheckpoint {
   id: string;
@@ -562,6 +564,39 @@ export default function EditorPage() {
       }
 
       if (cancelled) return;
+      if (refreshedFiles.some((file) => file.name === missingFile)) {
+        setOpsError(null);
+        return;
+      }
+
+      // Freshly created files can return transient 404s before storage catches up.
+      // Probe the file endpoint a few times before treating it as truly missing.
+      let fileRecovered = false;
+      for (let attempt = 0; attempt < MISSING_FILE_PROBE_ATTEMPTS; attempt += 1) {
+        if (attempt > 0) {
+          await new Promise((resolve) => setTimeout(resolve, MISSING_FILE_PROBE_DELAY_MS));
+          if (cancelled) return;
+        }
+
+        try {
+          const probe = await fetch(`${buildFileApiPath(missingFile)}?probe=${Date.now()}`, {
+            cache: 'no-store',
+          });
+          if (probe.ok) {
+            fileRecovered = true;
+            break;
+          }
+        } catch {
+          // Ignore transient network errors while probing.
+        }
+      }
+
+      if (cancelled) return;
+      if (fileRecovered) {
+        setOpsError(null);
+        void mutateFiles();
+        return;
+      }
 
       const shouldReset = shouldResetSelectedFileAfter404({
         hasLocalOnlyDraft,

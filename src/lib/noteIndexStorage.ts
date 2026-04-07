@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { FileEntry } from '@/types';
-import { isMissingBlobValue } from '@/lib/blobValue';
+import { isMissingBlobValue, readBlobText } from '@/lib/blobValue';
 import { getBlobStore, isNetlifyRuntime } from '@/lib/netlifyRuntime';
 import { getNotesDir } from '@/lib/notesPath';
 
@@ -36,7 +36,7 @@ async function readBlobFileMeta(filename: string): Promise<BlobFileMetaRecord | 
   try {
     const buffer = await store.get(getBlobFileMetaKey(filename));
     if (isMissingBlobValue(buffer)) return null;
-    const parsed = JSON.parse(new TextDecoder().decode(buffer)) as Partial<BlobFileMetaRecord>;
+    const parsed = JSON.parse(await readBlobText(buffer)) as Partial<BlobFileMetaRecord>;
     if (!parsed.updatedAt && !parsed.createdAt) return null;
     return {
       createdAt: parsed.createdAt ?? parsed.updatedAt ?? nowIso(),

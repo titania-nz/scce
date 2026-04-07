@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import type { FileCategory } from '@/types';
+import { isMissingBlobValue, readBlobText } from '@/lib/blobValue';
 import { getBlobStore, isNetlifyRuntime } from '@/lib/netlifyRuntime';
 import { getNotesDir } from '@/lib/notesPath';
 
@@ -37,8 +38,8 @@ export async function readFileCategory(filename: string): Promise<FileCategory |
 
     try {
       const buffer = await store.get(getBlobFileCategoryKey(filename));
-      if (!buffer) return null;
-      const parsed = JSON.parse(new TextDecoder().decode(buffer)) as Partial<FileCategory>;
+      if (isMissingBlobValue(buffer)) return null;
+      const parsed = JSON.parse(await readBlobText(buffer)) as Partial<FileCategory>;
       return normalizeFileCategory(parsed);
     } catch {
       return null;
