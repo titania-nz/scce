@@ -5,6 +5,7 @@ import { useFiles } from '@/hooks/useFiles';
 import type { FileContentResponse, FileEntry } from '@/types';
 import { buildFileApiPath } from '@/lib/fileApiPath';
 import { getFolderName, getParentFolderPath, joinFolderPath } from '@/lib/folderPaths';
+import { findAvailableVersionedFilename } from '@/lib/versionedFilename';
 import {
   DEFAULT_REVISION_META,
   parseMetaFromContent,
@@ -879,11 +880,12 @@ export default function Sidebar({
       name = joinFilePath(newFileParentPath, name);
     }
     if (!name.endsWith('.md')) name += '.md';
+    const resolvedName = findAvailableVersionedFilename(name, files.map((file) => file.name));
     setError(null);
     try {
-      await createFile(name, clipboardContent ?? '');
+      const created = await createFile(resolvedName, clipboardContent ?? '');
       resetNewInput();
-      onFileSelect(name);
+      onFileSelect(created?.name ?? resolvedName);
     } catch (err: unknown) {
       const e = err as { message?: string };
       setError(e.message ?? 'Could not create file');

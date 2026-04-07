@@ -9,6 +9,7 @@ import {
   FolderRenameResponse,
 } from '@/types';
 import { buildFileApiPath } from '@/lib/fileApiPath';
+import { findAvailableVersionedFilename, getNextVersionedFilename } from '@/lib/versionedFilename';
 
 const EMPTY_FILES: FileEntry[] = [];
 const EMPTY_FOLDERS: string[] = [];
@@ -45,36 +46,53 @@ export function useFiles() {
 
   // Create a brand-new markdown file.
   async function createFile(name: string, content = ''): Promise<FileEntry | null> {
-    const optimisticFile = makeOptimisticFile(name, content);
     let createdFile: FileEntry | null = null;
 
     await mutate(
       async (current) => {
-        const res = await fetch('/api/files', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, content }),
-        });
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error ?? 'Could not create file');
+        const existingNames = current?.files?.map((file) => file.name) ?? [];
+        let candidateName = findAvailableVersionedFilename(name, existingNames);
+
+        while (true) {
+          const res = await fetch('/api/files', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: candidateName, content }),
+          });
+          if (res.ok) {
+            const created = (await res.json()) as Partial<FileEntry> & { name: string };
+            createdFile = {
+              ...makeOptimisticFile(candidateName, content),
+              ...created,
+              name: created.name,
+            };
+
+            return {
+              files: sortFiles([
+                ...(current?.files ?? []).filter((file) => file.name !== createdFile?.name),
+                createdFile,
+              ]),
+              folders: current?.folders ?? EMPTY_FOLDERS,
+            };
+          }
+
+          const err = await res.json().catch(() => ({})) as { error?: string };
+          if (res.status !== 409) {
+            throw new Error(err.error ?? 'Could not create file');
+          }
+
+          candidateName = getNextVersionedFilename(candidateName);
         }
-
-        const created = (await res.json()) as Partial<FileEntry> & { name: string };
-        createdFile = {
-          ...optimisticFile,
-          ...created,
-          name: created.name,
-        };
-
-        return {
-          files: sortFiles([...(current?.files ?? []).filter((file) => file.name !== name), createdFile]),
-        };
       },
       {
-        optimisticData: (current) => ({
-          files: sortFiles([...(current?.files ?? []).filter((file) => file.name !== name), optimisticFile]),
-        }),
+        optimisticData: (current) => {
+          const optimisticName = findAvailableVersionedFilename(name, current?.files?.map((file) => file.name) ?? []);
+          const optimisticFile = makeOptimisticFile(optimisticName, content);
+          return {
+            files: sortFiles([...(current?.files ?? []).filter((file) => file.name !== optimisticName), optimisticFile]),
+            folders: current?.folders ?? EMPTY_FOLDERS,
+          };
+        },
         rollbackOnError: true,
         populateCache: true,
         revalidate: false,

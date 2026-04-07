@@ -597,8 +597,8 @@ export default function EditorPage() {
     const rawName = window.prompt('New file name', 'untitled');
     if (!rawName) return;
     const nextName = rawName.endsWith('.md') ? rawName : `${rawName}.md`;
-    await createFile(nextName, '');
-    setSelectedFile(nextName);
+    const created = await createFile(nextName, '');
+    setSelectedFile(created?.name ?? nextName);
     setCommandPaletteOpen(false);
   }, [createFile]);
 
@@ -627,8 +627,8 @@ export default function EditorPage() {
     const tomorrow = toDateStamp(new Date(Date.now() + 24 * 60 * 60 * 1000));
     const filename = `daily/${today}.md`;
     const dailyTemplate = `# Daily note — ${today}\n\nPrev: [[daily/${yesterday}]]\nNext: [[daily/${tomorrow}]]\n\n## Priorities\n- \n\n## Journal\n- \n`;
-    await createFile(filename, dailyTemplate);
-    setSelectedFile(filename);
+    const created = await createFile(filename, dailyTemplate);
+    setSelectedFile(created?.name ?? filename);
     setCommandPaletteOpen(false);
   }, [createFile]);
 
