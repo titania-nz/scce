@@ -10,30 +10,33 @@ interface PublishMeta {
 
 const EMPTY_META: PublishMeta = { history: [] };
 
+// Return the local folder used to store publish history records.
 function getPublishDir(): string {
   const dir = path.join(getNotesDir(), '.published');
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
 
+// Build the local file path for one note's publish-history record.
 function getPublishPath(filename: string): string {
   resolveSafePath(filename);
   return path.join(getPublishDir(), `${encodeURIComponent(filename)}.json`);
 }
 
+// Build the Blob-storage key for one note's publish-history record.
 function getPublishBlobKey(filename: string): string {
   resolveSafePath(filename);
   return `${filename}.publish-history.json`;
 }
 
-// Helper function: keeps a small, testable transformation isolated from UI side effects.
+// Clean and sort publish-history entries so the newest item always appears first.
 function normalizeHistory(history: PublishHistoryEntry[]): PublishHistoryEntry[] {
   return history
     .filter((entry) => Boolean(entry.id && entry.createdAt && entry.profileId))
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
-// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
+// Read the publish-history list for a file, regardless of which storage backend is active.
 export async function readPublishHistory(filename: string): Promise<PublishHistoryEntry[]> {
   if (isNetlifyRuntime) {
     const store = getBlobStore();
@@ -62,7 +65,7 @@ export async function readPublishHistory(filename: string): Promise<PublishHisto
   }
 }
 
-// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
+// Save the full publish-history list for a file.
 export async function writePublishHistory(filename: string, history: PublishHistoryEntry[]): Promise<void> {
   const payload: PublishMeta = {
     history: normalizeHistory(history),
@@ -81,7 +84,7 @@ export async function writePublishHistory(filename: string, history: PublishHist
   fs.renameSync(tmpPath, publishPath);
 }
 
-// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
+// Move publish history to a new filename after a rename.
 export async function renamePublishHistory(oldName: string, newName: string): Promise<void> {
   const history = await readPublishHistory(oldName);
   if (!history.length) {
@@ -91,7 +94,7 @@ export async function renamePublishHistory(oldName: string, newName: string): Pr
   await deletePublishHistory(oldName);
 }
 
-// API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
+// Remove stored publish history when a file is deleted.
 export async function deletePublishHistory(filename: string): Promise<void> {
   if (isNetlifyRuntime) {
     const store = getBlobStore();

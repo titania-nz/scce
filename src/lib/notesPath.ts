@@ -5,6 +5,7 @@ import { isNetlifyRuntime } from '@/lib/netlifyRuntime';
 const VALID_FILENAME = /^[a-zA-Z0-9_\-. /]+\.md$/;
 const MAX_FILENAME_LENGTH = 255;
 
+// Return the root folder where local markdown notes should live.
 export function getNotesDir(): string {
   if (isNetlifyRuntime) {
     return '';
@@ -17,6 +18,7 @@ export function getNotesDir(): string {
   return dir;
 }
 
+// Reject unsafe paths and convert a logical note name into a real storage path.
 export function resolveSafePath(filename: string): string {
   if (!filename || filename.length > MAX_FILENAME_LENGTH) {
     throw Object.assign(new Error('Invalid filename'), { status: 400 });

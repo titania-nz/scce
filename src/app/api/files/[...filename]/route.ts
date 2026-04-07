@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { readFile, writeFile, deleteFile, renameFile } from '@/lib/fileStorage';
+import { deleteNoteFile, readNoteFile, renameNoteFile, writeNoteFile } from '@/lib/noteContentStorage';
 import { deleteRevisions, readRevisions, renameRevisions, writeRevisions } from '@/lib/revisionStorage';
 import { deletePublishHistory, renamePublishHistory } from '@/lib/publishStorage';
 import { parseFilename } from '@/lib/parseFilename';
@@ -38,7 +38,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
   const { filename: rawFilename } = await params;
   try {
     const filename = parseFilename(rawFilename);
-    const [content, revisions] = await Promise.all([readFile(filename), readRevisions(filename)]);
+    const [content, revisions] = await Promise.all([readNoteFile(filename), readRevisions(filename)]);
     const requestUrl = _request.nextUrl;
     const revisionId = requestUrl.searchParams.get('revisionId');
     const selectedRevision = revisionId
@@ -78,7 +78,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
       if (!newName.endsWith('.md')) {
         return NextResponse.json({ error: 'Filename must end with .md' }, { status: 400 });
       }
-      await renameFile(filename, newName);
+      await renameNoteFile(filename, newName);
       await renameRevisions(filename, newName);
       await renamePublishHistory(filename, newName);
       return NextResponse.json({ name: newName });
@@ -92,7 +92,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
       const tags = parseTags(body.tags);
       const status = parseStatus(body.status);
 
-      await writeFile(filename, content);
+      await writeNoteFile(filename, content);
 
       const revisions = await readRevisions(filename);
       const lastRevision = revisions.at(-1);
@@ -145,7 +145,7 @@ export async function DELETE(_request: NextRequest, { params }: Params) {
   const { filename: rawFilename } = await params;
   try {
     const filename = parseFilename(rawFilename);
-    await deleteFile(filename);
+    await deleteNoteFile(filename);
     await deleteRevisions(filename);
     await deletePublishHistory(filename);
     return NextResponse.json({ success: true });

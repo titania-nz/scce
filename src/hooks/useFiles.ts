@@ -5,16 +5,18 @@ import { FileEntry, FileListResponse } from '@/types';
 import { buildFileApiPath } from '@/lib/fileApiPath';
 import { fetchJson } from '@/lib/fetchJson';
 
+// Load the sidebar file list from the API.
 const fetcher = (url: string) =>
   fetch(url).then((r) => {
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return r.json();
   });
 
-// Public hook/helper: called from UI code to encapsulate shared stateful behavior.
+// Centralize the basic file-management actions used across the editor UI.
 export function useFiles() {
   const { data, error, isLoading, mutate } = useSWR<FileListResponse>('/api/files', fetcher);
 
+  // Create a brand-new markdown file.
   async function createFile(name: string, content = ''): Promise<FileEntry | null> {
     const res = await fetch('/api/files', {
       method: 'POST',
@@ -30,6 +32,7 @@ export function useFiles() {
     return created;
   }
 
+  // Remove one markdown file from storage.
   async function deleteFile(filename: string): Promise<void> {
     const res = await fetch(buildFileApiPath(filename), { method: 'DELETE' });
     if (!res.ok) {
@@ -39,6 +42,7 @@ export function useFiles() {
     await mutate();
   }
 
+  // Remove several files in one action, then refresh the sidebar list once.
   async function deleteFiles(filenames: string[]): Promise<void> {
     await Promise.all(
       filenames.map(async (filename) => {
@@ -52,6 +56,7 @@ export function useFiles() {
     await mutate();
   }
 
+  // Change a file's name while keeping the sidebar in sync.
   async function renameFile(oldName: string, newName: string): Promise<void> {
     const res = await fetch(buildFileApiPath(oldName), {
       method: 'PUT',

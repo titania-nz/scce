@@ -13,10 +13,12 @@ const BLOCK_WINDOW_MS = 5 * 60 * 1000;
 
 const attemptsByIp = new Map<string, AuthAttemptState>();
 
+// Return the current time in milliseconds so the throttle logic is easy to test.
 function now(): number {
   return Date.now();
 }
 
+// Identify the caller as best we can so repeated failed logins can be rate-limited.
 function getClientIp(request: Request): string {
   const forwardedFor = request.headers.get('x-forwarded-for');
   if (forwardedFor) {
@@ -29,7 +31,7 @@ function getClientIp(request: Request): string {
   return 'unknown';
 }
 
-// Public hook/helper: called from UI code to encapsulate shared stateful behavior.
+// Check whether this request should still be allowed to attempt a login.
 export function getAuthThrottleStatus(request: Request): AuthThrottleStatus {
   const ip = getClientIp(request);
   const state = attemptsByIp.get(ip);
@@ -49,7 +51,7 @@ export function getAuthThrottleStatus(request: Request): AuthThrottleStatus {
   };
 }
 
-// Public hook/helper: called from UI code to encapsulate shared stateful behavior.
+// Record one failed login and start a temporary block after too many misses.
 export function recordAuthFailure(request: Request): void {
   const ip = getClientIp(request);
   const state = attemptsByIp.get(ip) ?? { failedAttempts: 0, blockedUntil: 0 };
@@ -63,7 +65,7 @@ export function recordAuthFailure(request: Request): void {
   });
 }
 
-// Public hook/helper: called from UI code to encapsulate shared stateful behavior.
+// Return the current auth token payload used by the login route.
 export function createAuthToken(secret: string): string {
   return secret;
 }

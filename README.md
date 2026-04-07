@@ -1,69 +1,103 @@
-# Markdown Editor
+# SCCE Markdown Workspace
 
-A personal markdown file editor and viewer built with Next.js.
+This project is a password-protected markdown writing workspace built with Next.js.
 
-## Local Development
+It is designed for drafting, revising, reviewing, and publishing markdown files without needing a separate database. When you run it locally, the app stores notes on disk in the `notes/` folder. When you deploy it to Netlify, it stores the same kinds of records in Netlify Blobs instead.
+
+## What the app does
+
+- Create, rename, delete, and edit markdown files
+- Save revision checkpoints with notes, tags, and statuses
+- Compare revisions to see what changed
+- Keep local draft copies and recover unsaved work
+- Group document revisions into a review dashboard
+- Add revision comments and collaboration metadata
+- Publish accepted revisions through a simple publish flow
+- Export content from the editor
+
+## How the project is organized
+
+- `src/app/`: Next.js routes, pages, and API endpoints
+- `src/components/`: the visible editor interface
+- `src/hooks/`: reusable React logic for loading and saving data
+- `src/lib/`: storage, authentication, export, and helper utilities
+- `src/types/`: shared TypeScript data shapes
+- `notes/`: local markdown files when running on your machine
+
+## Local setup
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). Notes are stored in the `notes/` directory by default. Set the `NOTES_DIR` environment variable to use a different path.
+Then open [http://localhost:3000](http://localhost:3000).
 
-### Local validation
+By default, files are stored in `notes/`. If you want to use a different folder, set `NOTES_DIR` before starting the app.
 
-Before opening a pull request, run:
+Example:
 
 ```bash
-npm run lint
-npm run typecheck
-npm run test
+NOTES_DIR=/absolute/path/to/my-notes npm run dev
 ```
 
-CI runs the same commands on pull requests. The workflow currently uses non-blocking mode (`continue-on-error`) while baseline issues are being resolved; remove that setting to enforce hard required checks.
+## Required environment variables
+
+The app expects these values when authentication is enabled:
+
+| Variable | What it is for |
+|---|---|
+| `AUTH_PASSWORD` | The password entered on the login screen |
+| `AUTH_SECRET` | A long secret used to sign the login cookie |
+
+You can generate a secret with:
+
+```bash
+openssl rand -hex 32
+```
+
+If `AUTH_SECRET` is missing, the app intentionally refuses requests with a `503` response so it is not accidentally exposed with insecure auth.
+
+## How storage works
+
+### Local development
+
+- Markdown files live in `notes/`
+- Revision history is stored alongside them in hidden support folders
+- Publish history and document review records are stored locally too
+
+### Netlify deployment
+
+- Notes and metadata are stored in Netlify Blobs
+- Local files are not automatically synced to Netlify
+- Netlify-hosted files are also not automatically copied back to your local machine
+
+## Main workflows
+
+### Writing
+
+Open a file in the editor, type as usual, and the app keeps a working draft while you edit. A checkpoint save creates a revision entry with optional note, tags, and status values.
+
+### Reviewing
+
+Revisions can be compared, promoted through branch states such as draft or accepted, and discussed through revision comments and collaboration metadata.
+
+### Publishing
+
+Publishing is intentionally lightweight in this codebase. An accepted revision can be published through one of the configured publish profiles, and the app records a publish history so previous published content can be restored.
 
 ## Deploying to Netlify
 
-### 1. Connect the repository
+The repository already includes a `netlify.toml` file, so the main setup steps are:
 
-In the Netlify dashboard, create a new site and connect this repository. The `netlify.toml` file configures the build automatically:
+1. Create a new Netlify site and connect this repository.
+2. Confirm the build command is `npm run build`.
+3. Confirm the publish directory is `.next`.
+4. Add `AUTH_PASSWORD` and `AUTH_SECRET` in the Netlify environment settings.
+5. Deploy the site.
 
-- **Build command:** `npm run build`
-- **Publish directory:** `.next`
-- **Plugin:** `@netlify/plugin-nextjs` (handles Next.js App Router)
+The Next.js build is handled through `@netlify/plugin-nextjs`.
 
-### 2. Set environment variables
+## Notes for non-developers reading the code
 
-In **Site Settings > Environment variables**, add the following:
-
-| Variable | Description |
-|---|---|
-| `AUTH_PASSWORD` | The password you will type on the login screen |
-| `AUTH_SECRET` | A long random secret used to sign the auth cookie - generate one with `openssl rand -hex 32` |
-
-### 3. Deploy
-
-Trigger a deploy (or push to your connected branch). Once live, every visit will redirect to a login page. Only someone with the correct `AUTH_PASSWORD` can access the app.
-
-### Notes storage
-
-On Netlify, notes are stored in **Netlify Blobs** (persistent key-value storage included with all Netlify plans). Notes created locally are not synced to Netlify and vice versa.
-
-## Authentication
-
-All routes are protected by a password set via the `AUTH_PASSWORD` environment variable. After a successful login, an httpOnly cookie is set that lasts 30 days. To log out, visit `/login` — a logout option can be added if needed.
-
-If `AUTH_SECRET` is not set, the site will return a `503` error on every request as a safety measure.
-
-## Collaboration scaffolding
-
-Document revisions now include collaboration state so a personal workflow can evolve into team workflows without changing storage shape. Each immutable revision can now carry:
-
-- presence and optional draft lock ownership ("Alice is editing this draft")
-- shared comments
-- review requests
-- mentions and per-user notifications
-- an audit trail of collaboration events (who changed what and when)
-
-Collaboration state is managed via `PATCH /api/files/documents/:documentId/revisions/:revisionId` and persisted alongside each revision record.
+This repo now includes more inline comments around the shared hooks and storage helpers. The comments are written to explain what each function is responsible for in plain language, especially in the files that handle saving, loading, revisions, authentication, and publishing.

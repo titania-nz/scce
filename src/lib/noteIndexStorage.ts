@@ -12,18 +12,22 @@ interface BlobFileMetaRecord {
   size: number;
 }
 
+// Return a timestamp string for fallback metadata values.
 function nowIso(): string {
   return new Date().toISOString();
 }
 
+// Turn a file path into a storage-safe string for metadata keys.
 function encodeFilenameForPath(filename: string): string {
   return encodeURIComponent(filename);
 }
 
+// Build the metadata key used to look up file timestamps and size.
 function getBlobFileMetaKey(filename: string): string {
   return `__filemeta__/${encodeFilenameForPath(filename)}.json`;
 }
 
+// Read one file's metadata record from Netlify Blobs if it exists.
 async function readBlobFileMeta(filename: string): Promise<BlobFileMetaRecord | null> {
   const store = getBlobStore();
   if (!store) return null;
@@ -43,6 +47,7 @@ async function readBlobFileMeta(filename: string): Promise<BlobFileMetaRecord | 
   }
 }
 
+// List every markdown file that should appear in the app's file picker.
 export async function listNoteFiles(): Promise<FileEntry[]> {
   if (isNetlifyRuntime) {
     const store = getBlobStore();

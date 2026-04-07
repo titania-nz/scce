@@ -5,6 +5,7 @@ import { FileContentResponse, Revision, RevisionInlineNote, RevisionStatus } fro
 import { buildFileApiPath, buildFileDraftApiPath, buildFileRevisionsApiPath } from '@/lib/fileApiPath';
 import { fetchJson } from '@/lib/fetchJson';
 
+// Load one file record, including its current content and saved revisions.
 const fetcher = (url: string) =>
   fetch(url).then((r) => {
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -17,7 +18,7 @@ interface SaveContentOptions {
   status?: RevisionStatus;
 }
 
-// Public hook/helper: called from UI code to encapsulate shared stateful behavior.
+// Keep all "open file" data loading and save actions in one reusable hook.
 export function useFileContent(filename: string | null, revisionId?: string | null) {
   const key = filename
     ? `${buildFileApiPath(filename)}${revisionId ? `?revisionId=${encodeURIComponent(revisionId)}` : ''}`
@@ -26,6 +27,7 @@ export function useFileContent(filename: string | null, revisionId?: string | nu
     revalidateOnFocus: false,
   });
 
+  // Save the current editor text as the newest revision for this file.
   async function saveContent(content: string, options: SaveContentOptions = {}): Promise<void> {
     if (!filename) return;
     const res = await fetch(buildFileApiPath(filename), {
@@ -47,6 +49,7 @@ export function useFileContent(filename: string | null, revisionId?: string | nu
     await mutate({ name: filename, content, revisions: response.revisions ?? data?.revisions ?? [] }, { revalidate: false });
   }
 
+  // Switch the live draft back to a previously saved revision.
   async function promoteRevisionAsDraft(nextRevisionId: string): Promise<void> {
     if (!filename) return;
     const res = await fetch(buildFileDraftApiPath(filename), {
@@ -61,6 +64,7 @@ export function useFileContent(filename: string | null, revisionId?: string | nu
     await mutate();
   }
 
+  // Save inline review notes that belong to one revision snapshot.
   async function updateRevisionInlineNotes(revisionId: string, inlineNotes: RevisionInlineNote[]): Promise<void> {
     if (!filename) return;
     const res = await fetch(buildFileRevisionsApiPath(filename), {

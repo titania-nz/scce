@@ -1,5 +1,6 @@
 import { ExportFormat } from '@/types';
 
+// Escape characters that would otherwise be treated as raw HTML.
 function escapeHtml(value: string): string {
   return value
     .replaceAll('&', '&amp;')
@@ -9,6 +10,7 @@ function escapeHtml(value: string): string {
     .replaceAll("'", '&#39;');
 }
 
+// Convert a few common inline markdown patterns into simple HTML tags.
 function inlineMarkdownToHtml(line: string): string {
   return escapeHtml(line)
     .replace(/`([^`]+)`/g, '<code>$1</code>')
@@ -17,7 +19,7 @@ function inlineMarkdownToHtml(line: string): string {
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
 }
 
-// Helper function: keeps a small, testable transformation isolated from UI side effects.
+// Turn markdown into a simple standalone HTML document for download or preview.
 export function markdownToHtmlDocument(markdown: string, title: string): string {
   const lines = markdown.split(/\r?\n/);
   const blocks = lines.map((rawLine) => {
@@ -52,11 +54,12 @@ export function markdownToHtmlDocument(markdown: string, title: string): string 
 </html>`;
 }
 
+// Escape text so it can be inserted safely into the hand-built PDF content stream.
 function escapePdfText(value: string): string {
   return value.replaceAll('\\', '\\\\').replaceAll('(', '\\(').replaceAll(')', '\\)');
 }
 
-// Helper function: keeps a small, testable transformation isolated from UI side effects.
+// Build a minimal single-page PDF from markdown text.
 export function markdownToSimplePdf(markdown: string, title: string): Uint8Array {
   const contentLines = [title, '', ...markdown.split(/\r?\n/)];
   const maxLines = 60;
@@ -92,7 +95,7 @@ export function markdownToSimplePdf(markdown: string, title: string): Uint8Array
   return new TextEncoder().encode(parts.join(''));
 }
 
-// Helper function: keeps a small, testable transformation isolated from UI side effects.
+// Build the XML content used inside a very simple DOCX-style export.
 export function markdownToDocxXml(markdown: string, title: string): string {
   const paragraphs = [title, '', ...markdown.split(/\r?\n/)]
     .map((line) => `<w:p><w:r><w:t xml:space="preserve">${escapeHtml(line)}</w:t></w:r></w:p>`)
@@ -106,7 +109,7 @@ export function markdownToDocxXml(markdown: string, title: string): string {
 </w:document>`;
 }
 
-// Helper function: keeps a small, testable transformation isolated from UI side effects.
+// Return the HTTP content type that matches the selected export format.
 export function resolveExportMimeType(format: ExportFormat): string {
   if (format === 'html') return 'text/html; charset=utf-8';
   if (format === 'pdf') return 'application/pdf';
