@@ -509,7 +509,7 @@ export default function EditorPage() {
     }
 
     loadPublishMetadata();
-  }, [selectedFile, revisions]);
+  }, [latestRevision?.id, selectedFile]);
 
   useEffect(() => {
     if (!selectedFile || !fileLoadError) return;

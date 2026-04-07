@@ -6,6 +6,7 @@ import { fetchJson } from '@/lib/fetchJson';
 
 // Load the document dashboard list used by the review view.
 const fetcher = (url: string) => fetchJson<{ documents: DocumentDashboardEntry[] }>(url, 'Could not load documents');
+const EMPTY_DOCUMENTS: DocumentDashboardEntry[] = [];
 
 // Give React components one place to load document-review data and trigger related actions.
 export function useDocuments() {
@@ -51,7 +52,7 @@ export function useDocuments() {
   }
 
   return {
-    documents: data?.documents ?? [],
+    documents: data?.documents ?? EMPTY_DOCUMENTS,
     isLoading,
     error,
     mutate,

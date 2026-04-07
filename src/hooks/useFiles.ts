@@ -10,6 +10,9 @@ import {
 } from '@/types';
 import { buildFileApiPath } from '@/lib/fileApiPath';
 
+const EMPTY_FILES: FileEntry[] = [];
+const EMPTY_FOLDERS: string[] = [];
+
 // Load the sidebar file list from the API.
 const fetcher = (url: string) =>
   fetch(url).then((r) => {
@@ -225,8 +228,8 @@ export function useFiles() {
   }
 
   return {
-    files: data?.files ?? [],
-    folders: sortFolders(data?.folders ?? []),
+    files: data?.files ?? EMPTY_FILES,
+    folders: data?.folders ? sortFolders(data.folders) : EMPTY_FOLDERS,
     isLoading,
     error,
     createFile,

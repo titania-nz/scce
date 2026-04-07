@@ -4,6 +4,8 @@ import useSWR from 'swr';
 import { FileContentResponse, Revision, RevisionInlineNote, RevisionStatus } from '@/types';
 import { buildFileApiPath, buildFileDraftApiPath, buildFileRevisionsApiPath } from '@/lib/fileApiPath';
 
+const EMPTY_REVISIONS: Revision[] = [];
+
 class FileRequestError extends Error {
   status: number;
 
@@ -86,7 +88,7 @@ export function useFileContent(filename: string | null, revisionId?: string | nu
     }
 
     const response = (await res.json()) as { revisions?: Revision[] };
-    await mutate({ name: filename, content, revisions: response.revisions ?? data?.revisions ?? [] }, { revalidate: false });
+    await mutate({ name: filename, content, revisions: response.revisions ?? data?.revisions ?? EMPTY_REVISIONS }, { revalidate: false });
   }
 
   // Switch the live draft back to a previously saved revision.
@@ -121,7 +123,7 @@ export function useFileContent(filename: string | null, revisionId?: string | nu
 
   return {
     content: data?.content ?? '',
-    revisions: data?.revisions ?? [],
+    revisions: data?.revisions ?? EMPTY_REVISIONS,
     revisionId: data?.revisionId ?? null,
     currentDraftRevisionId: data?.currentDraftRevisionId ?? data?.revisionId ?? null,
     isLoading,
