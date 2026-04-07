@@ -3,14 +3,34 @@
 import useSWR from 'swr';
 import { FileContentResponse, Revision, RevisionInlineNote, RevisionStatus } from '@/types';
 import { buildFileApiPath, buildFileDraftApiPath, buildFileRevisionsApiPath } from '@/lib/fileApiPath';
-import { fetchJson } from '@/lib/fetchJson';
+
+class FileRequestError extends Error {
+  status: number;
+
+  constructor(status: number, message?: string) {
+    super(message ?? `HTTP ${status}`);
+    this.name = 'FileRequestError';
+    this.status = status;
+  }
+}
 
 // Load one file record, including its current content and saved revisions.
-const fetcher = (url: string) =>
-  fetch(url).then((r) => {
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    return r.json();
-  });
+const fetcher = async (url: string) => {
+  const response = await fetch(url);
+  if (!response.ok) {
+    let message = `HTTP ${response.status}`;
+    try {
+      const payload = (await response.json()) as { error?: string };
+      if (typeof payload.error === 'string' && payload.error.trim()) {
+        message = payload.error;
+      }
+    } catch {
+      // Ignore invalid error payloads and fall back to the HTTP status text.
+    }
+    throw new FileRequestError(response.status, message);
+  }
+  return response.json();
+};
 
 interface SaveContentOptions {
   note?: string;
@@ -25,6 +45,7 @@ export function useFileContent(filename: string | null, revisionId?: string | nu
     : null;
   const { data, error, isLoading, mutate } = useSWR<FileContentResponse>(key, fetcher, {
     revalidateOnFocus: false,
+    shouldRetryOnError: (err) => !(err instanceof FileRequestError && err.status >= 400 && err.status < 500),
   });
 
   // Save the current editor text as the newest revision for this file.

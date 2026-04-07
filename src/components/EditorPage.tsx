@@ -243,7 +243,14 @@ export default function EditorPage() {
   const [jumpToHeadingToken, setJumpToHeadingToken] = useState<string>('');
   const [fileFilter, setFileFilter] = useState({ chapterSearch: '', metaSearch: '', dateFrom: '', dateTo: '' });
 
-  const { content: loadedContent, revisions, isLoading, saveContent, updateRevisionInlineNotes } = useFileContent(selectedFile);
+  const {
+    content: loadedContent,
+    revisions,
+    isLoading,
+    error: fileLoadError,
+    saveContent,
+    updateRevisionInlineNotes,
+  } = useFileContent(selectedFile);
   const {
     documents,
     isLoading: isDocumentsLoading,
@@ -517,6 +524,37 @@ export default function EditorPage() {
 
     loadPublishMetadata();
   }, [selectedFile, revisions]);
+
+  useEffect(() => {
+    if (!selectedFile || !fileLoadError) return;
+
+    const status = typeof fileLoadError === 'object' && fileLoadError && 'status' in fileLoadError
+      ? Number((fileLoadError as { status?: number }).status)
+      : null;
+
+    if (status !== 404) {
+      setOpsError(fileLoadError instanceof Error ? fileLoadError.message : 'Could not load file.');
+      return;
+    }
+
+    const fileStillExists = files.some((file) => file.name === selectedFile);
+    if (fileStillExists) {
+      setOpsError(`Could not load "${selectedFile}".`);
+      return;
+    }
+
+    setSelectedFile(null);
+    setContent('');
+    setIsDirty(false);
+    setRevisionNote('');
+    setTagsInput('');
+    setStatus('');
+    setPublishHistory([]);
+    setPublishProfiles([]);
+    setPublishMessage('');
+    setLatestRevisionStatus('');
+    setOpsError(`"${selectedFile}" no longer exists.`);
+  }, [fileLoadError, files, selectedFile]);
 
   const { isSaving, saveNow } = useAutoSave({
     content,
