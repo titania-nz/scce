@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFiles } from '@/hooks/useFiles';
-import type { FileCategory, FileContentResponse, FileEntry } from '@/types';
+import type { FileContentResponse, FileEntry } from '@/types';
 import { buildFileApiPath } from '@/lib/fileApiPath';
+import { getFolderName, getParentFolderPath, joinFolderPath } from '@/lib/folderPaths';
 import {
   DEFAULT_REVISION_META,
   parseMetaFromContent,
@@ -31,14 +32,11 @@ interface RevisionItem {
   createdAt: Date;
 }
 
-interface ChapterGroup {
-  chapter: string;
-  revisions: RevisionItem[];
-}
-
-interface DocumentGroup {
-  document: string;
-  chapters: ChapterGroup[];
+interface FileTreeNode {
+  path: string;
+  name: string;
+  folders: FileTreeNode[];
+  files: VisibleFileItem[];
 }
 
 interface HeadingItem {
@@ -90,8 +88,14 @@ interface SavedFilter {
   dateTo: string;
 }
 
+interface VisibleFileItem extends RevisionItem {
+  baseName: string;
+  folderPath: string | null;
+}
+
 const DEFAULT_META: RevisionMeta = DEFAULT_REVISION_META;
 const SAVED_FILTERS_STORAGE_KEY = 'scce.savedSidebarFilters';
+const ROOT_FOLDER_SENTINEL = '__ROOT__';
 
 // Helper function: keeps a small, testable transformation isolated from UI side effects.
 function getCurrentWeekRange(): { from: string; to: string } {
@@ -312,6 +316,69 @@ function getResolvedFileStructure(file: FileEntry) {
   };
 }
 
+function splitFilePath(fileName: string): { folderPath: string | null; baseName: string } {
+  const segments = fileName.split('/').filter(Boolean);
+  const baseName = segments[segments.length - 1] ?? fileName;
+  const folderPath = segments.length > 1 ? segments.slice(0, -1).join('/') : null;
+  return { folderPath, baseName };
+}
+
+function joinFilePath(folderPath: string | null, fileName: string): string {
+  const trimmed = fileName.trim().replace(/^\/+/, '');
+  if (!trimmed) return '';
+  return folderPath ? `${folderPath}/${trimmed}` : trimmed;
+}
+
+function createFolderTree(items: VisibleFileItem[], explicitFolders: string[]): { folders: FileTreeNode[]; rootFiles: VisibleFileItem[] } {
+  const folderMap = new Map<string, FileTreeNode>();
+  const rootFolders: FileTreeNode[] = [];
+
+  function ensureFolder(path: string): FileTreeNode {
+    const existing = folderMap.get(path);
+    if (existing) return existing;
+
+    const parentPath = getParentFolderPath(path);
+    const node: FileTreeNode = {
+      path,
+      name: getFolderName(path),
+      folders: [],
+      files: [],
+    };
+    folderMap.set(path, node);
+
+    if (parentPath) {
+      ensureFolder(parentPath).folders.push(node);
+    } else {
+      rootFolders.push(node);
+    }
+
+    return node;
+  }
+
+  explicitFolders.forEach((folderPath) => ensureFolder(folderPath));
+
+  const rootFiles: VisibleFileItem[] = [];
+  items.forEach((item) => {
+    if (item.folderPath) {
+      ensureFolder(item.folderPath).files.push(item);
+    } else {
+      rootFiles.push(item);
+    }
+  });
+
+  function sortNode(node: FileTreeNode) {
+    node.folders.sort((a, b) => a.name.localeCompare(b.name));
+    node.files.sort((a, b) => a.baseName.localeCompare(b.baseName));
+    node.folders.forEach(sortNode);
+  }
+
+  rootFolders.forEach(sortNode);
+  rootFolders.sort((a, b) => a.name.localeCompare(b.name));
+  rootFiles.sort((a, b) => a.baseName.localeCompare(b.baseName));
+
+  return { folders: rootFolders, rootFiles };
+}
+
 // Helper function: keeps a small, testable transformation isolated from UI side effects.
 function parseHeadings(content: string): HeadingItem[] {
   return content
@@ -374,12 +441,29 @@ export default function Sidebar({
   onJumpToHeading,
   applyFilter: applyExternalFilter,
 }: SidebarProps) {
-  const { files, isLoading, createFile, deleteFile, deleteFiles, renameFile, updateFileCategory } = useFiles();
+  const {
+    files,
+    folders,
+    isLoading,
+    createFile,
+    createFolder,
+    deleteFile,
+    deleteFiles,
+    deleteFolder,
+    renameFile,
+    renameFolder,
+    updateFileCategory,
+  } = useFiles();
   const [newFileName, setNewFileName] = useState('');
   const [showNewInput, setShowNewInput] = useState(false);
+  const [newFileParentPath, setNewFileParentPath] = useState<string | null>(null);
   const [clipboardContent, setClipboardContent] = useState<string | null>(null);
   const [renamingFile, setRenamingFile] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [renamingFolder, setRenamingFolder] = useState<string | null>(null);
+  const [folderRenameValue, setFolderRenameValue] = useState('');
+  const [creatingFolderParent, setCreatingFolderParent] = useState<string | null>(null);
+  const [newFolderValue, setNewFolderValue] = useState('');
   const [categorizingFile, setCategorizingFile] = useState<string | null>(null);
   const [categoryDocumentValue, setCategoryDocumentValue] = useState('');
   const [categoryChapterValue, setCategoryChapterValue] = useState('');
@@ -389,8 +473,7 @@ export default function Sidebar({
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [savedFilters, setSavedFilters] = useState<SavedFilter[]>([]);
-  const [collapsedDocuments, setCollapsedDocuments] = useState<Record<string, boolean>>({});
-  const [collapsedChapters, setCollapsedChapters] = useState<Record<string, boolean>>({});
+  const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
   const [revisionMetaByFile, setRevisionMetaByFile] = useState<Record<string, RevisionMeta>>({});
   const [searchEntries, setSearchEntries] = useState<SearchEntry[]>([]);
   const [headingsByFile, setHeadingsByFile] = useState<Record<string, HeadingItem[]>>({});
@@ -610,16 +693,18 @@ export default function Sidebar({
       .slice(0, 60);
   }, [facetDateRange, facetDocument, facetStatus, facetTag, globalQuery, searchEntries]);
 
-  const grouped = useMemo<DocumentGroup[]>(() => {
-    const items: RevisionItem[] = files.map((file) => {
+  const visibleItems = useMemo<VisibleFileItem[]>(() => {
+    const items: VisibleFileItem[] = files.map((file) => {
       const structure = getResolvedFileStructure(file);
       const createdAtSource = file.ctime ?? file.mtime;
       const createdAt = new Date(createdAtSource);
+      const pathParts = splitFilePath(file.name);
       return {
         file,
         ...structure,
         meta: revisionMetaByFile[file.name] ?? DEFAULT_META,
         createdAt: Number.isNaN(createdAt.getTime()) ? new Date(file.mtime) : createdAt,
+        ...pathParts,
       };
     });
 
@@ -628,7 +713,7 @@ export default function Sidebar({
     const fromDate = dateFrom ? new Date(`${dateFrom}T00:00:00`) : null;
     const toDate = dateTo ? new Date(`${dateTo}T23:59:59`) : null;
 
-    const filtered = items.filter((item) => {
+    return items.filter((item) => {
       const chapterMatches = !chapterFilter || item.chapter.toLowerCase().includes(chapterFilter);
       const sourceText = [item.meta.note, item.meta.status, item.meta.tags.join(' ')].join(' ').toLowerCase();
       const metaMatches = !metaFilter || sourceText.includes(metaFilter);
@@ -636,41 +721,9 @@ export default function Sidebar({
       const toMatches = !toDate || item.createdAt <= toDate;
       return chapterMatches && metaMatches && fromMatches && toMatches;
     });
-
-    const documentMap = new Map<string, Map<string, RevisionItem[]>>();
-
-    filtered.forEach((item) => {
-      if (!documentMap.has(item.document)) {
-        documentMap.set(item.document, new Map<string, RevisionItem[]>());
-      }
-      const chapterMap = documentMap.get(item.document)!;
-      if (!chapterMap.has(item.chapter)) {
-        chapterMap.set(item.chapter, []);
-      }
-      chapterMap.get(item.chapter)!.push(item);
-    });
-
-    const output: DocumentGroup[] = [];
-
-    documentMap.forEach((chapterMap, document) => {
-      const chapters: ChapterGroup[] = [];
-      chapterMap.forEach((revisions, chapter) => {
-        const orderedRevisions = [...revisions].sort((a, b) => {
-          const revA = a.revisionOrder ?? -1;
-          const revB = b.revisionOrder ?? -1;
-          if (revA !== revB) return revB - revA;
-          return b.createdAt.getTime() - a.createdAt.getTime();
-        });
-        chapters.push({ chapter, revisions: orderedRevisions });
-      });
-
-      chapters.sort((a, b) => a.chapter.localeCompare(b.chapter));
-      output.push({ document, chapters });
-    });
-
-    output.sort((a, b) => a.document.localeCompare(b.document));
-    return output;
   }, [chapterSearch, dateFrom, dateTo, files, metaSearch, revisionMetaByFile]);
+
+  const tree = useMemo(() => createFolderTree(visibleItems, folders), [folders, visibleItems]);
 
   async function buildImportCandidates(entries: Array<{ name: string; content: string }>) {
     const candidates: ImportCandidate[] = [];
@@ -828,12 +881,16 @@ export default function Sidebar({
   function resetNewInput() {
     setShowNewInput(false);
     setNewFileName('');
+    setNewFileParentPath(null);
     setClipboardContent(null);
   }
 
   async function handleCreate() {
     let name = newFileName.trim();
     if (!name) return;
+    if (!name.includes('/') && newFileParentPath) {
+      name = joinFilePath(newFileParentPath, name);
+    }
     if (!name.endsWith('.md')) name += '.md';
     setError(null);
     try {
@@ -850,6 +907,7 @@ export default function Sidebar({
     try {
       const text = await navigator.clipboard.readText();
       setClipboardContent(text);
+      setNewFileParentPath(null);
       const today = new Date().toISOString().slice(0, 10);
       setNewFileName(`paste-${today}`);
       setShowNewInput(true);
@@ -966,7 +1024,24 @@ export default function Sidebar({
 
   function startRename(file: FileEntry) {
     setRenamingFile(file.name);
-    setRenameValue(file.name.replace(/\.md$/, ''));
+    setRenameValue(splitFilePath(file.name).baseName.replace(/\.md$/, ''));
+    setCategorizingFile(null);
+    setRenamingFolder(null);
+  }
+
+  function startFolderRename(folderPath: string) {
+    setRenamingFolder(folderPath);
+    setFolderRenameValue(getFolderName(folderPath));
+    setRenamingFile(null);
+    setCategorizingFile(null);
+  }
+
+  function startFolderCreate(parentPath: string | null) {
+    setShowNewInput(false);
+    setCreatingFolderParent(parentPath ?? ROOT_FOLDER_SENTINEL);
+    setNewFolderValue('');
+    setRenamingFolder(null);
+    setRenamingFile(null);
     setCategorizingFile(null);
   }
 
@@ -976,6 +1051,7 @@ export default function Sidebar({
     setCategoryDocumentValue(file.category?.document ?? category.document);
     setCategoryChapterValue(file.category?.chapter ?? category.chapter);
     setRenamingFile(null);
+    setRenamingFolder(null);
   }
 
   async function handleRename(oldName: string) {
@@ -984,6 +1060,9 @@ export default function Sidebar({
     if (!newName) {
       setRenamingFile(null);
       return;
+    }
+    if (!newName.includes('/')) {
+      newName = joinFilePath(splitFilePath(oldName).folderPath, newName);
     }
     if (!newName.endsWith('.md')) newName += '.md';
     if (newName === oldName) {
@@ -1001,6 +1080,68 @@ export default function Sidebar({
       setError(e.message ?? 'Could not rename file');
     } finally {
       renamingInFlightRef.current = false;
+    }
+  }
+
+  async function handleFolderRename(oldPath: string) {
+    const trimmed = folderRenameValue.trim();
+    if (!trimmed) {
+      setRenamingFolder(null);
+      return;
+    }
+
+    const parentPath = getParentFolderPath(oldPath);
+    const newPath = trimmed.includes('/') ? trimmed : joinFolderPath(parentPath, trimmed);
+    if (newPath === oldPath) {
+      setRenamingFolder(null);
+      return;
+    }
+
+    setError(null);
+    try {
+      const result = await renameFolder(oldPath, newPath);
+      result.renamed.forEach((entry) => onFileRenamed(entry.oldName, entry.newName));
+      setRenamingFolder(null);
+    } catch (err: unknown) {
+      const error = err as { message?: string };
+      setError(error.message ?? 'Could not rename folder');
+    }
+  }
+
+  async function handleCreateFolder() {
+    const trimmed = newFolderValue.trim();
+    if (!trimmed) return;
+
+    setError(null);
+    try {
+      const parentPath = creatingFolderParent === ROOT_FOLDER_SENTINEL ? null : creatingFolderParent;
+      const path = trimmed.includes('/') || !parentPath
+        ? trimmed
+        : joinFolderPath(parentPath, trimmed);
+      await createFolder(path);
+      setCreatingFolderParent(null);
+      setNewFolderValue('');
+      setCollapsedFolders((prev) => ({ ...prev, [path]: false }));
+    } catch (err: unknown) {
+      const error = err as { message?: string };
+      setError(error.message ?? 'Could not create folder');
+    }
+  }
+
+  async function handleDeleteFolder(folderPath: string) {
+    const fileCount = files.filter((file) => file.name.startsWith(`${folderPath}/`)).length;
+    const confirmMessage = fileCount > 0
+      ? `Delete folder "${folderPath}" and ${fileCount} file(s)?`
+      : `Delete empty folder "${folderPath}"?`;
+    if (!confirm(confirmMessage)) return;
+
+    setError(null);
+    try {
+      const result = await deleteFolder(folderPath);
+      result.deleted.forEach((filename) => onFileDeleted(filename));
+    } catch (err: unknown) {
+      const error = err as { message?: string };
+      setError(error.message ?? 'Could not delete folder');
     }
   }
 
@@ -1026,17 +1167,325 @@ export default function Sidebar({
     }
   }
 
-  function toggleDocument(document: string) {
-    setCollapsedDocuments((prev) => ({ ...prev, [document]: !prev[document] }));
-  }
-
-  function toggleChapter(key: string) {
-    setCollapsedChapters((prev) => ({ ...prev, [key]: !prev[key] }));
+  function toggleFolder(folderPath: string) {
+    setCollapsedFolders((prev) => ({ ...prev, [folderPath]: !prev[folderPath] }));
   }
 
   function handleJumpToHeading() {
     if (!selectedHeading) return;
     onJumpToHeading(selectedHeading);
+  }
+
+  function openNewFileInput(parentPath: string | null) {
+    setShowNewInput(true);
+    setNewFileParentPath(parentPath);
+    setNewFileName(parentPath ? 'untitled.md' : '');
+    setClipboardContent(null);
+    setError(null);
+    setCreatingFolderParent(null);
+  }
+
+  function renderFileRow(revision: VisibleFileItem) {
+    const isChecked = selectedFiles.has(revision.file.name);
+
+    return (
+      <div
+        key={revision.file.name}
+        className={`group border-l-2 px-4 py-2 cursor-pointer hover:bg-gray-800/70 transition-colors ${
+          selectionMode && isChecked
+            ? 'bg-gray-800/50 border-blue-500'
+            : !selectionMode && selectedFile === revision.file.name
+            ? 'bg-gray-800 border-blue-500'
+            : 'border-transparent'
+        }`}
+        onClick={() => {
+          if (selectionMode) {
+            toggleFileSelection(revision.file.name);
+          } else {
+            onFileSelect(revision.file.name);
+          }
+        }}
+      >
+        {renamingFile === revision.file.name ? (
+          <input
+            type="text"
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void handleRename(revision.file.name);
+              if (e.key === 'Escape') setRenamingFile(null);
+            }}
+            onBlur={() => void handleRename(revision.file.name)}
+            className="w-full bg-gray-700 text-gray-100 text-sm px-1 py-0.5 rounded border border-gray-500 focus:outline-none focus:border-blue-500"
+            autoFocus
+          />
+        ) : categorizingFile === revision.file.name ? (
+          <div className="space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                type="text"
+                value={categoryDocumentValue}
+                onChange={(e) => setCategoryDocumentValue(e.target.value)}
+                placeholder="Document"
+                className="w-full bg-gray-700 text-gray-100 text-xs px-2 py-1 rounded border border-gray-500 focus:outline-none focus:border-blue-500"
+                autoFocus
+              />
+              <input
+                type="text"
+                value={categoryChapterValue}
+                onChange={(e) => setCategoryChapterValue(e.target.value)}
+                placeholder="Chapter"
+                className="w-full bg-gray-700 text-gray-100 text-xs px-2 py-1 rounded border border-gray-500 focus:outline-none focus:border-blue-500"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void handleSaveCategory(revision.file.name);
+                  if (e.key === 'Escape') setCategorizingFile(null);
+                }}
+              />
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void handleSaveCategory(revision.file.name);
+                }}
+                className="text-xs px-2 py-1 bg-blue-600 hover:bg-blue-500 rounded transition-colors"
+              >
+                Save category
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void updateFileCategory(revision.file.name, null)
+                    .then(() => setCategorizingFile(null))
+                    .catch((err: unknown) => {
+                      const saveError = err as { message?: string };
+                      setError(saveError.message ?? 'Could not update file category');
+                    });
+                }}
+                className="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded transition-colors"
+              >
+                Clear
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setCategorizingFile(null);
+                }}
+                className="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center gap-2">
+              {selectionMode && (
+                <input
+                  type="checkbox"
+                  checked={isChecked}
+                  onChange={() => toggleFileSelection(revision.file.name)}
+                  onClick={(e) => e.stopPropagation()}
+                  className="shrink-0 accent-blue-500"
+                  aria-label={`Select ${revision.file.name}`}
+                />
+              )}
+              <span className="text-sm truncate">{revision.baseName}</span>
+              {revision.revisionOrder !== null && (
+                <span className="text-[10px] uppercase text-gray-500">{revision.revisionLabel}</span>
+              )}
+              {!selectionMode && (
+                <div className="ml-auto flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      startCategoryEdit(revision.file);
+                    }}
+                    className="text-gray-400 hover:text-white p-0.5"
+                    title={revision.file.category ? 'Re-categorise' : 'Categorise'}
+                    aria-label={`${revision.file.category ? 'Re-categorise' : 'Categorise'} ${revision.file.name}`}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7a2 2 0 012-2h5l2 2h7a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      startRename(revision.file);
+                    }}
+                    className="text-gray-400 hover:text-white p-0.5"
+                    title="Rename / move"
+                    aria-label={`Rename ${revision.file.name}`}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      void handleDelete(revision.file);
+                    }}
+                    className="text-gray-400 hover:text-red-400 p-0.5"
+                    title="Delete"
+                    aria-label={`Delete ${revision.file.name}`}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="mt-1 text-[11px] text-gray-400 space-y-0.5">
+              <div className="truncate">
+                {revision.file.name}
+                {revision.file.category && (
+                  <span className="ml-2 rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] text-blue-200">
+                    Categorised
+                  </span>
+                )}
+              </div>
+              <div className="truncate">{revision.document} / {revision.chapter}</div>
+              <div>Created: {formatDate(revision.file.ctime ?? revision.file.mtime)}</div>
+              {revision.meta.note && <div className="truncate">{revision.meta.note}</div>}
+              {revision.meta.tags.length > 0 && (
+                <div className="truncate text-blue-300/90">#{revision.meta.tags.join(' #')}</div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  function renderFolderNode(node: FileTreeNode, depth = 0) {
+    const collapsed = collapsedFolders[node.path] ?? false;
+    const isRenaming = renamingFolder === node.path;
+    const isCreatingChildFolder = creatingFolderParent === node.path;
+
+    return (
+      <div key={node.path} className={depth > 0 ? 'border-t border-gray-800/40' : ''}>
+        <div
+          className="group flex items-center gap-2 px-3 py-2 hover:bg-gray-800/50 transition-colors"
+          style={{ paddingLeft: `${12 + depth * 14}px` }}
+        >
+          <button
+            type="button"
+            onClick={() => toggleFolder(node.path)}
+            className="text-gray-500 hover:text-gray-300"
+            aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${node.name}`}
+          >
+            <span className="text-[10px]">{collapsed ? '+' : '-'}</span>
+          </button>
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 text-amber-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7a2 2 0 012-2h5l2 2h7a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+          </svg>
+          {isRenaming ? (
+            <input
+              type="text"
+              value={folderRenameValue}
+              onChange={(e) => setFolderRenameValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void handleFolderRename(node.path);
+                if (e.key === 'Escape') setRenamingFolder(null);
+              }}
+              onBlur={() => void handleFolderRename(node.path)}
+              className="flex-1 bg-gray-700 text-gray-100 text-sm px-2 py-1 rounded border border-gray-500 focus:outline-none focus:border-blue-500"
+              autoFocus
+            />
+          ) : (
+            <span className="text-sm text-gray-200 truncate flex-1">{node.name}</span>
+          )}
+          {!selectionMode && !isRenaming && (
+            <div className="ml-auto flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+              <button
+                type="button"
+                onClick={() => openNewFileInput(node.path)}
+                className="text-gray-400 hover:text-white p-0.5"
+                title="New file in folder"
+                aria-label={`New file in ${node.path}`}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={() => startFolderCreate(node.path)}
+                className="text-gray-400 hover:text-white p-0.5"
+                title="New subfolder"
+                aria-label={`New subfolder in ${node.path}`}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7a2 2 0 012-2h5l2 2h3m4 0h2m-1-1v2m-6 9h7a2 2 0 002-2V9a2 2 0 00-2-2h-7l-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2h4" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={() => startFolderRename(node.path)}
+                className="text-gray-400 hover:text-white p-0.5"
+                title="Rename / move folder"
+                aria-label={`Rename ${node.path}`}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleDeleteFolder(node.path)}
+                className="text-gray-400 hover:text-red-400 p-0.5"
+                title="Delete folder"
+                aria-label={`Delete ${node.path}`}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </button>
+            </div>
+          )}
+        </div>
+
+        {isCreatingChildFolder && (
+          <div className="px-3 pb-2" style={{ paddingLeft: `${28 + depth * 14}px` }}>
+            <input
+              type="text"
+              value={newFolderValue}
+              onChange={(e) => setNewFolderValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void handleCreateFolder();
+                if (e.key === 'Escape') setCreatingFolderParent(null);
+              }}
+              placeholder="subfolder-name"
+              className="w-full bg-gray-800 text-gray-100 text-sm px-2 py-1 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
+              autoFocus
+            />
+          </div>
+        )}
+
+        {!collapsed && (
+          <div>
+            {node.folders.map((child) => renderFolderNode(child, depth + 1))}
+            {node.files.map(renderFileRow)}
+          </div>
+        )}
+      </div>
+    );
   }
 
   return (
@@ -1125,8 +1574,10 @@ export default function Sidebar({
           <button
             onClick={() => {
               setShowNewInput(true);
+              setNewFileParentPath(null);
               setClipboardContent(null);
               setError(null);
+              setCreatingFolderParent(null);
             }}
             className="text-gray-400 hover:text-white transition-colors"
             title="New file"
@@ -1134,6 +1585,16 @@ export default function Sidebar({
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+          </button>
+          <button
+            onClick={() => startFolderCreate(null)}
+            className="text-gray-400 hover:text-white transition-colors"
+            title="New folder"
+            aria-label="New folder"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4.5 w-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7a2 2 0 012-2h5l2 2h3m4 0h2m-1-1v2m-6 9h7a2 2 0 002-2V9a2 2 0 00-2-2h-7l-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2h4" />
             </svg>
           </button>
         </div>
@@ -1380,7 +1841,7 @@ export default function Sidebar({
               if (e.key === 'Enter') handleCreate();
               if (e.key === 'Escape') resetNewInput();
             }}
-            placeholder="filename.md"
+            placeholder={newFileParentPath ? `${newFileParentPath}/filename.md` : 'filename.md'}
             className="w-full bg-gray-800 text-gray-100 text-sm px-2 py-1 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
             autoFocus
           />
@@ -1393,6 +1854,37 @@ export default function Sidebar({
             </button>
             <button
               onClick={resetNewInput}
+              className="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {creatingFolderParent !== null && creatingFolderParent === ROOT_FOLDER_SENTINEL && (
+        <div className="px-3 py-2 border-b border-gray-700">
+          <input
+            type="text"
+            value={newFolderValue}
+            onChange={(e) => setNewFolderValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void handleCreateFolder();
+              if (e.key === 'Escape') setCreatingFolderParent(null);
+            }}
+            placeholder="new-folder"
+            className="w-full bg-gray-800 text-gray-100 text-sm px-2 py-1 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
+            autoFocus
+          />
+          <div className="flex gap-2 mt-1">
+            <button
+              onClick={() => void handleCreateFolder()}
+              className="text-xs px-2 py-1 bg-blue-600 hover:bg-blue-500 rounded transition-colors"
+            >
+              Create folder
+            </button>
+            <button
+              onClick={() => setCreatingFolderParent(null)}
               className="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded transition-colors"
             >
               Cancel
@@ -1432,244 +1924,16 @@ export default function Sidebar({
           </div>
         )}
         {isLoading && <div className="px-4 py-3 text-sm text-gray-500">Loading...</div>}
-        {!isLoading && grouped.length === 0 && <div className="px-4 py-3 text-sm text-gray-500">No matching files</div>}
+        {!isLoading && tree.folders.length === 0 && tree.rootFiles.length === 0 && (
+          <div className="px-4 py-3 text-sm text-gray-500">No matching files</div>
+        )}
 
-        {grouped.map((documentGroup) => {
-          const documentCollapsed = collapsedDocuments[documentGroup.document] ?? false;
-          return (
-            <div key={documentGroup.document} className="border-b border-gray-800/70">
-              <button
-                onClick={() => toggleDocument(documentGroup.document)}
-                className="w-full flex items-center justify-between px-3 py-2 bg-gray-900/80 hover:bg-gray-800 transition-colors"
-              >
-                <span className="text-xs font-semibold uppercase tracking-wide text-gray-300 truncate">{documentGroup.document}</span>
-                <span className="text-[10px] text-gray-500">{documentCollapsed ? '+' : '-'}</span>
-              </button>
-
-              {!documentCollapsed && documentGroup.chapters.map((chapterGroup) => {
-                const chapterKey = `${documentGroup.document}::${chapterGroup.chapter}`;
-                const chapterCollapsed = collapsedChapters[chapterKey] ?? false;
-                const latestRevision = chapterGroup.revisions[0]?.file.name;
-
-                return (
-                  <div key={chapterKey} className="border-t border-gray-800/50">
-                    <button
-                      onClick={() => toggleChapter(chapterKey)}
-                      className="w-full flex items-center justify-between px-4 py-2 bg-gray-900/40 hover:bg-gray-800/70 transition-colors"
-                    >
-                      <span className="text-xs text-gray-300 truncate">{chapterGroup.chapter}</span>
-                      <span className="text-[10px] text-gray-500">{chapterCollapsed ? '+' : '-'}</span>
-                    </button>
-
-                    {!chapterCollapsed && (
-                      <div>
-                        {chapterGroup.revisions.map((revision) => {
-                          const status = revision.meta.status.toLowerCase();
-                          const isDraft = status.includes('draft') || revision.file.name.toLowerCase().includes('draft');
-                          const isCurrent = status.includes('current') || revision.file.name === latestRevision;
-
-                          const isChecked = selectedFiles.has(revision.file.name);
-
-                          return (
-                            <div
-                              key={revision.file.name}
-                              className={`group border-l-2 px-5 py-2 cursor-pointer hover:bg-gray-800/70 transition-colors ${
-                                selectionMode && isChecked
-                                  ? 'bg-gray-800/50 border-blue-500'
-                                  : !selectionMode && selectedFile === revision.file.name
-                                  ? 'bg-gray-800 border-blue-500'
-                                  : 'border-transparent'
-                              }`}
-                              onClick={() => {
-                                if (selectionMode) {
-                                  toggleFileSelection(revision.file.name);
-                                } else {
-                                  onFileSelect(revision.file.name);
-                                }
-                              }}
-                            >
-                              {renamingFile === revision.file.name ? (
-                                <input
-                                  type="text"
-                                  value={renameValue}
-                                  onChange={(e) => setRenameValue(e.target.value)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') handleRename(revision.file.name);
-                                    if (e.key === 'Escape') setRenamingFile(null);
-                                  }}
-                                  onBlur={() => handleRename(revision.file.name)}
-                                  className="w-full bg-gray-700 text-gray-100 text-sm px-1 py-0.5 rounded border border-gray-500 focus:outline-none focus:border-blue-500"
-                                  autoFocus
-                                />
-                              ) : categorizingFile === revision.file.name ? (
-                                <div className="space-y-2">
-                                  <div className="grid grid-cols-2 gap-2">
-                                    <input
-                                      type="text"
-                                      value={categoryDocumentValue}
-                                      onChange={(e) => setCategoryDocumentValue(e.target.value)}
-                                      placeholder="Document"
-                                      className="w-full bg-gray-700 text-gray-100 text-xs px-2 py-1 rounded border border-gray-500 focus:outline-none focus:border-blue-500"
-                                      autoFocus
-                                    />
-                                    <input
-                                      type="text"
-                                      value={categoryChapterValue}
-                                      onChange={(e) => setCategoryChapterValue(e.target.value)}
-                                      placeholder="Chapter"
-                                      className="w-full bg-gray-700 text-gray-100 text-xs px-2 py-1 rounded border border-gray-500 focus:outline-none focus:border-blue-500"
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter') void handleSaveCategory(revision.file.name);
-                                        if (e.key === 'Escape') setCategorizingFile(null);
-                                      }}
-                                    />
-                                  </div>
-                                  <div className="flex gap-2">
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        void handleSaveCategory(revision.file.name);
-                                      }}
-                                      className="text-xs px-2 py-1 bg-blue-600 hover:bg-blue-500 rounded transition-colors"
-                                    >
-                                      Save category
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        void updateFileCategory(revision.file.name, null)
-                                          .then(() => setCategorizingFile(null))
-                                          .catch((err: unknown) => {
-                                            const saveError = err as { message?: string };
-                                            setError(saveError.message ?? 'Could not update file category');
-                                          });
-                                      }}
-                                      className="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded transition-colors"
-                                    >
-                                      Clear
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        setCategorizingFile(null);
-                                      }}
-                                      className="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded transition-colors"
-                                    >
-                                      Cancel
-                                    </button>
-                                  </div>
-                                </div>
-                              ) : (
-                                <>
-                                  <div className="flex items-center gap-2">
-                                    {selectionMode && (
-                                      <input
-                                        type="checkbox"
-                                        checked={isChecked}
-                                        onChange={() => toggleFileSelection(revision.file.name)}
-                                        onClick={(e) => e.stopPropagation()}
-                                        className="shrink-0 accent-blue-500"
-                                        aria-label={`Select ${revision.file.name}`}
-                                      />
-                                    )}
-                                    <span className="text-sm truncate">{revision.revisionLabel}</span>
-                                    {isDraft && (
-                                      <span className="text-[10px] font-semibold uppercase bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded">
-                                        Draft
-                                      </span>
-                                    )}
-                                    {isCurrent && (
-                                      <span className="text-[10px] font-semibold uppercase bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded">
-                                        Current
-                                      </span>
-                                    )}
-                                    {!selectionMode && (
-                                      <div className="ml-auto flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.preventDefault();
-                                            e.stopPropagation();
-                                            startCategoryEdit(revision.file);
-                                          }}
-                                          className="text-gray-400 hover:text-white p-0.5"
-                                          title={revision.file.category ? 'Re-categorise' : 'Categorise'}
-                                          aria-label={`${revision.file.category ? 'Re-categorise' : 'Categorise'} ${revision.file.name}`}
-                                        >
-                                          <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7a2 2 0 012-2h5l2 2h7a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
-                                          </svg>
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.preventDefault();
-                                            e.stopPropagation();
-                                            startRename(revision.file);
-                                          }}
-                                          className="text-gray-400 hover:text-white p-0.5"
-                                          title="Rename"
-                                          aria-label={`Rename ${revision.file.name}`}
-                                        >
-                                          <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                                          </svg>
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.preventDefault();
-                                            e.stopPropagation();
-                                            void handleDelete(revision.file);
-                                          }}
-                                          className="text-gray-400 hover:text-red-400 p-0.5"
-                                          title="Delete"
-                                          aria-label={`Delete ${revision.file.name}`}
-                                        >
-                                          <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                          </svg>
-                                        </button>
-                                      </div>
-                                    )}
-                                  </div>
-
-                                  <div className="mt-1 text-[11px] text-gray-400 space-y-0.5">
-                                    <div className="truncate">
-                                      {revision.document} / {revision.chapter}
-                                      {revision.file.category && (
-                                        <span className="ml-2 rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] text-blue-200">
-                                          Categorised
-                                        </span>
-                                      )}
-                                    </div>
-                                    <div className="flex gap-2">
-                                      <span>Created: {formatDate(revision.file.ctime ?? revision.file.mtime)}</span>
-                                    </div>
-                                    {revision.meta.note && <div className="truncate">{revision.meta.note}</div>}
-                                    {revision.meta.tags.length > 0 && (
-                                      <div className="truncate text-blue-300/90">#{revision.meta.tags.join(' #')}</div>
-                                    )}
-                                  </div>
-                                </>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          );
-        })}
+        {tree.folders.map((folder) => renderFolderNode(folder))}
+        {tree.rootFiles.length > 0 && (
+          <div className={tree.folders.length > 0 ? 'border-t border-gray-800/50' : ''}>
+            {tree.rootFiles.map(renderFileRow)}
+          </div>
+        )}
       </div>
 
       {selectionMode && (

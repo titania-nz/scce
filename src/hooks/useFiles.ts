@@ -1,7 +1,13 @@
 'use client';
 
 import useSWR from 'swr';
-import { FileCategory, FileEntry, FileListResponse } from '@/types';
+import {
+  FileCategory,
+  FileEntry,
+  FileListResponse,
+  FolderDeleteResponse,
+  FolderRenameResponse,
+} from '@/types';
 import { buildFileApiPath } from '@/lib/fileApiPath';
 
 // Load the sidebar file list from the API.
@@ -13,6 +19,10 @@ const fetcher = (url: string) =>
 
 function sortFiles(files: FileEntry[]): FileEntry[] {
   return [...files].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function sortFolders(folders: string[]): string[] {
+  return [...folders].sort((a, b) => a.localeCompare(b));
 }
 
 function makeOptimisticFile(name: string, content = ''): FileEntry {
@@ -162,14 +172,70 @@ export function useFiles() {
     return updated.category ?? null;
   }
 
+  async function createFolder(path: string): Promise<string[]> {
+    const res = await fetch('/api/files/folders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error ?? 'Could not create folder');
+    }
+
+    const payload = (await res.json()) as { folders?: string[] };
+    await mutate((current) => ({
+      files: current?.files ?? [],
+      folders: sortFolders(payload.folders ?? current?.folders ?? []),
+    }), { revalidate: false });
+    void mutate();
+    return payload.folders ?? [];
+  }
+
+  async function renameFolder(path: string, newPath: string): Promise<FolderRenameResponse> {
+    const res = await fetch('/api/files/folders', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path, newPath }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error ?? 'Could not rename folder');
+    }
+
+    const payload = (await res.json()) as FolderRenameResponse;
+    await mutate();
+    return payload;
+  }
+
+  async function deleteFolder(path: string): Promise<FolderDeleteResponse> {
+    const res = await fetch('/api/files/folders', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error ?? 'Could not delete folder');
+    }
+
+    const payload = (await res.json()) as FolderDeleteResponse;
+    await mutate();
+    return payload;
+  }
+
   return {
     files: data?.files ?? [],
+    folders: sortFolders(data?.folders ?? []),
     isLoading,
     error,
     createFile,
+    createFolder,
     deleteFile,
     deleteFiles,
+    deleteFolder,
     renameFile,
+    renameFolder,
     updateFileCategory,
     mutate,
   };

@@ -8,6 +8,25 @@ export interface FileEntry {
 
 export interface FileListResponse {
   files: FileEntry[];
+  folders?: string[];
+}
+
+export interface FileRenameRecord {
+  oldName: string;
+  newName: string;
+}
+
+export interface FolderRenameResponse {
+  path: string;
+  newPath: string;
+  renamed: FileRenameRecord[];
+  folders: string[];
+}
+
+export interface FolderDeleteResponse {
+  path: string;
+  deleted: string[];
+  folders: string[];
 }
 
 export interface FileCategory {

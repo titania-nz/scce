@@ -2,13 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { listNoteFiles } from '@/lib/noteIndexStorage';
 import { noteFileExists, readNoteFile, writeNoteFile } from '@/lib/noteContentStorage';
 import { readFileCategory } from '@/lib/fileCategoryStorage';
+import { readFolders } from '@/lib/folderStorage';
 import { readRevisions } from '@/lib/revisionStorage';
 import { parseMetaFromContent, summarizeRevisionMeta } from '@/lib/revisionMeta';
 
 // API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function GET(request: NextRequest) {
   try {
-    const files = await listNoteFiles();
+    const [files, folders] = await Promise.all([listNoteFiles(), readFolders()]);
     const includeMeta = request.nextUrl.searchParams.get('includeMeta');
     const shouldIncludeMeta = includeMeta === '1' || includeMeta === 'true';
 
@@ -33,7 +34,7 @@ export async function GET(request: NextRequest) {
         }
       }),
     );
-    return NextResponse.json({ files: filesWithMeta });
+    return NextResponse.json({ files: filesWithMeta, folders });
   } catch {
     return NextResponse.json({ error: 'Could not read notes directory' }, { status: 500 });
   }
