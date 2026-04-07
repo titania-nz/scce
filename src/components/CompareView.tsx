@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFiles } from '@/hooks/useFiles';
 import { useFileContent } from '@/hooks/useFileContent';
 import { buildFileApiPath } from '@/lib/fileApiPath';
-import { computeDiff } from '@/lib/diffUtils';
+import { buildMergedPreviewRanges, computeDiff, getMergedPreviewAnchorText } from '@/lib/diffUtils';
 import { REVISION_STATUSES } from '@/lib/revisionStatus';
 import { findAvailableVersionedFilename } from '@/lib/versionedFilename';
 import { RevisionStatus } from '@/types';
@@ -19,7 +19,6 @@ interface CompareViewProps {
 
 type PostMergeAction = 'keep' | 'archive' | 'delete';
 type MergedOutputView = 'raw' | 'rich';
-type MergedPreviewRange = { startLine: number; endLine: number };
 
 function buildArchivePath(filename: string): string {
   return `archive/${filename}`;
@@ -51,6 +50,7 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
   const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
   const [mergedOutputView, setMergedOutputView] = useState<MergedOutputView>('raw');
   const [activeHunkId, setActiveHunkId] = useState<number | null>(null);
+  const [isMergeConfigCollapsed, setIsMergeConfigCollapsed] = useState(false);
   const pendingSaveRef = useRef<{ filename: string; content: string } | null>(null);
   const mergedPreviewRef = useRef<HTMLDivElement>(null);
 
@@ -155,40 +155,16 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
     setMergedOutput(mergedOutputDraft);
   }, [mergedOutputDraft]);
 
-  const mergedPreviewRanges = useMemo<Record<number, MergedPreviewRange>>(() => {
-    if (!effectiveContentA && !effectiveContentB) return {};
-    if (diff.isIdentical || diff.hunks.length === 0) return {};
-
-    let sourceCursor = 0;
-    let outputCursor = 0;
-    const ranges: Record<number, MergedPreviewRange> = {};
-
-    for (const hunk of diff.hunks) {
-      outputCursor += Math.max(0, hunk.start - sourceCursor);
-      sourceCursor = hunk.end + 1;
-
-      const state = mergeStateByHunk[hunk.id] ?? 'unresolved';
-      let lineCount = 0;
-
-      if (state === 'edited') {
-        const edited = editedContentByHunk[hunk.id] ?? '';
-        lineCount = edited.length > 0 ? edited.split('\n').length : 0;
-      } else {
-        const takeB = state === 'takeB' || state === 'unresolved';
-        lineCount = hunk.lines.filter((line) => (takeB ? line.kind !== 'removed' : line.kind !== 'added')).length;
-      }
-
-      ranges[hunk.id] = {
-        startLine: outputCursor,
-        endLine: Math.max(outputCursor, outputCursor + lineCount - 1),
-      };
-      outputCursor += lineCount;
-    }
-
-    return ranges;
-  }, [diff, editedContentByHunk, effectiveContentA, effectiveContentB, mergeStateByHunk]);
+  const mergedPreviewRanges = useMemo(
+    () => buildMergedPreviewRanges(diff, mergeStateByHunk, editedContentByHunk),
+    [diff, editedContentByHunk, mergeStateByHunk],
+  );
 
   const mergedOutputLines = useMemo(() => mergedOutput.split('\n'), [mergedOutput]);
+  const activeMergedPreviewText = useMemo(
+    () => getMergedPreviewAnchorText(mergedOutputLines, activeHunkId !== null ? mergedPreviewRanges[activeHunkId] : undefined),
+    [activeHunkId, mergedOutputLines, mergedPreviewRanges],
+  );
 
   useEffect(() => {
     if (activeHunkId === null || mergedOutputView !== 'raw') return;
@@ -314,180 +290,207 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
 
   return (
     <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
-      <div className="flex flex-col gap-2 px-3 py-2 bg-gray-900 border-b border-gray-700 shrink-0">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-gray-400 shrink-0">A</span>
-          <select
-            value={selectedA ?? ''}
-            onChange={(e) => {
-              const next = e.target.value || null;
-              setSelectedA(next);
-              onFileSelect?.(next);
-              setRevisionA('latest');
-            }}
-            className={selectClass}
-          >
-            <option value="">Select a file...</option>
-            {files.map((f) => (
-              <option key={f.name} value={f.name}>{f.name}</option>
-            ))}
-          </select>
-          <select
-            value={revisionA}
-            onChange={(e) => setRevisionA(e.target.value)}
-            className={`${selectClass} max-w-60`}
-            disabled={!selectedA}
-          >
-            <option value="latest">Latest</option>
-            {[...revisionsA].reverse().map((revision) => (
-              <option key={revision.id} value={revision.id}>
-                {new Date(revision.createdAt).toLocaleDateString()} {revision.note ? `- ${revision.note}` : ''}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-gray-400 shrink-0">B</span>
-          <select
-            value={selectedB ?? ''}
-            onChange={(e) => {
-              const next = e.target.value || null;
-              setSelectedB(next);
-              setRevisionB('latest');
-            }}
-            className={selectClass}
-          >
-            <option value="">Select a file...</option>
-            {files.map((f) => (
-              <option key={f.name} value={f.name}>{f.name}</option>
-            ))}
-          </select>
-          <select
-            value={revisionB}
-            onChange={(e) => setRevisionB(e.target.value)}
-            className={`${selectClass} max-w-60`}
-            disabled={!selectedB}
-          >
-            <option value="latest">Latest</option>
-            {[...revisionsB].reverse().map((revision) => (
-              <option key={revision.id} value={revision.id}>
-                {new Date(revision.createdAt).toLocaleDateString()} {revision.note ? `- ${revision.note}` : ''}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-semibold text-gray-400 shrink-0">Destination</span>
-          <select
-            value={destination}
-            onChange={(e) => {
-              setDestination(e.target.value as 'overwrite-a' | 'overwrite-b' | 'new-path');
-              setSaveError(null);
-              setSaveSuccess(null);
-            }}
-            className={`${selectClass} max-w-64`}
-          >
-            <option value="overwrite-a">Overwrite file A</option>
-            <option value="overwrite-b">Overwrite file B</option>
-            <option value="new-path">Save as new file path</option>
-          </select>
-
-          {destination === 'new-path' && (
-            <input
-              className={`${selectClass} min-w-64`}
-              value={newFilePath}
-              onChange={(e) => setNewFilePath(e.target.value)}
-              placeholder="docs/merged-result.md"
-            />
-          )}
-        </div>
-
-        <div className="grid gap-2 sm:grid-cols-3">
-          <input
-            className={selectClass}
-            value={mergeNote}
-            onChange={(e) => setMergeNote(e.target.value)}
-            placeholder="Revision note (optional)"
-          />
-          <input
-            className={selectClass}
-            value={mergeTagsInput}
-            onChange={(e) => setMergeTagsInput(e.target.value)}
-            placeholder="Tags (optional, comma-separated)"
-          />
-          <select
-            className={selectClass}
-            value={mergeStatus}
-            onChange={(e) => setMergeStatus((e.target.value as RevisionStatus) || '')}
-          >
-            <option value="">No status</option>
-            {REVISION_STATUSES.map((option) => (
-              <option key={option} value={option}>{option}</option>
-            ))}
-          </select>
-        </div>
-
-        <div className="grid gap-2 sm:grid-cols-2">
-          <label className="flex items-center gap-2 text-xs text-gray-300">
-            <span className="min-w-16 text-gray-400">After A</span>
-            <select
-              className={selectClass}
-              value={sourceAWillBeReplaced ? 'keep' : postMergeActionA}
-              onChange={(e) => setPostMergeActionA(e.target.value as PostMergeAction)}
-              disabled={sourceAWillBeReplaced || !selectedA}
-            >
-              <option value="keep">Keep file A</option>
-              <option value="archive">Archive file A</option>
-              <option value="delete">Delete file A</option>
-            </select>
-          </label>
-          <label className="flex items-center gap-2 text-xs text-gray-300">
-            <span className="min-w-16 text-gray-400">After B</span>
-            <select
-              className={selectClass}
-              value={sourceBWillBeReplaced ? 'keep' : postMergeActionB}
-              onChange={(e) => setPostMergeActionB(e.target.value as PostMergeAction)}
-              disabled={sourceBWillBeReplaced || !selectedB}
-            >
-              <option value="keep">Keep file B</option>
-              <option value="archive">Archive file B</option>
-              <option value="delete">Delete file B</option>
-            </select>
-          </label>
-        </div>
-        {(sourceAWillBeReplaced || sourceBWillBeReplaced) && (
-          <p className="text-xs text-gray-500">
-            The merge target always stays in place, so overwrite targets cannot be archived or deleted in the same step.
-          </p>
-        )}
-
-        {(saveSuccess || saveError) && (
-          <div className={`text-xs ${saveError ? 'text-red-400' : 'text-green-400'}`}>
-            {saveError ?? saveSuccess}
-          </div>
-        )}
-        <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-gray-700">
-          <label className="text-xs text-gray-300 shrink-0">Merge target</label>
-          <input
-            value={targetFilename ?? ''}
-            onChange={(e) => setNewFilePath(e.target.value)}
-            placeholder="merged-result.md"
-            className="flex-1 min-w-56 text-xs bg-gray-800 text-gray-200 border border-gray-600 rounded px-2 py-1 focus:outline-none focus:border-blue-500"
-          />
+      <div className="bg-gray-900 border-b border-gray-700 shrink-0">
+        <div className="flex items-center gap-3 px-3 py-2">
           <button
-            onClick={handleFinalize}
-            disabled={!bothSelected || isSavingMerged}
-            className="px-2 py-1 rounded bg-blue-600 hover:bg-blue-500 text-xs text-white disabled:opacity-40 disabled:cursor-not-allowed"
+            type="button"
+            onClick={() => setIsMergeConfigCollapsed((prev) => !prev)}
+            aria-expanded={!isMergeConfigCollapsed}
+            aria-controls="merge-config-panel"
+            className="inline-flex shrink-0 items-center gap-2 rounded border border-gray-700 bg-gray-950 px-2 py-1 text-xs text-gray-200 transition-colors hover:bg-gray-800"
           >
-            {isSavingMerged ? 'Saving…' : 'Finalize Merge'}
+            <span className="text-[10px] text-gray-400">{isMergeConfigCollapsed ? '+' : '-'}</span>
+            <span>{isMergeConfigCollapsed ? 'Show merge controls' : 'Hide merge controls'}</span>
           </button>
-          <span className={`text-xs ${unresolvedHunks > 0 ? 'text-amber-300' : 'text-gray-500'}`}>
+          <div className="min-w-0 flex-1 text-xs text-gray-400">
+            <span className="font-medium text-gray-200">Merge setup</span>
+            <span className="mx-2 text-gray-600">•</span>
+            <span className="truncate">
+              {selectedA || 'Choose file A'} vs {selectedB || 'choose file B'}
+            </span>
+          </div>
+          <span className={`shrink-0 text-xs ${unresolvedHunks > 0 ? 'text-amber-300' : 'text-gray-500'}`}>
             {unresolvedHunks > 0 ? `${unresolvedHunks} unresolved hunk(s)` : 'All hunks resolved'}
           </span>
         </div>
-        {errorMessage && <p className="text-xs text-red-300">{errorMessage}</p>}
+
+        {!isMergeConfigCollapsed && (
+          <div id="merge-config-panel" className="flex flex-col gap-2 px-3 pb-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-gray-400 shrink-0">A</span>
+              <select
+                value={selectedA ?? ''}
+                onChange={(e) => {
+                  const next = e.target.value || null;
+                  setSelectedA(next);
+                  onFileSelect?.(next);
+                  setRevisionA('latest');
+                }}
+                className={selectClass}
+              >
+                <option value="">Select a file...</option>
+                {files.map((f) => (
+                  <option key={f.name} value={f.name}>{f.name}</option>
+                ))}
+              </select>
+              <select
+                value={revisionA}
+                onChange={(e) => setRevisionA(e.target.value)}
+                className={`${selectClass} max-w-60`}
+                disabled={!selectedA}
+              >
+                <option value="latest">Latest</option>
+                {[...revisionsA].reverse().map((revision) => (
+                  <option key={revision.id} value={revision.id}>
+                    {new Date(revision.createdAt).toLocaleDateString()} {revision.note ? `- ${revision.note}` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-gray-400 shrink-0">B</span>
+              <select
+                value={selectedB ?? ''}
+                onChange={(e) => {
+                  const next = e.target.value || null;
+                  setSelectedB(next);
+                  setRevisionB('latest');
+                }}
+                className={selectClass}
+              >
+                <option value="">Select a file...</option>
+                {files.map((f) => (
+                  <option key={f.name} value={f.name}>{f.name}</option>
+                ))}
+              </select>
+              <select
+                value={revisionB}
+                onChange={(e) => setRevisionB(e.target.value)}
+                className={`${selectClass} max-w-60`}
+                disabled={!selectedB}
+              >
+                <option value="latest">Latest</option>
+                {[...revisionsB].reverse().map((revision) => (
+                  <option key={revision.id} value={revision.id}>
+                    {new Date(revision.createdAt).toLocaleDateString()} {revision.note ? `- ${revision.note}` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold text-gray-400 shrink-0">Destination</span>
+              <select
+                value={destination}
+                onChange={(e) => {
+                  setDestination(e.target.value as 'overwrite-a' | 'overwrite-b' | 'new-path');
+                  setSaveError(null);
+                  setSaveSuccess(null);
+                }}
+                className={`${selectClass} max-w-64`}
+              >
+                <option value="overwrite-a">Overwrite file A</option>
+                <option value="overwrite-b">Overwrite file B</option>
+                <option value="new-path">Save as new file path</option>
+              </select>
+
+              {destination === 'new-path' && (
+                <input
+                  className={`${selectClass} min-w-64`}
+                  value={newFilePath}
+                  onChange={(e) => setNewFilePath(e.target.value)}
+                  placeholder="docs/merged-result.md"
+                />
+              )}
+            </div>
+
+            <div className="grid gap-2 sm:grid-cols-3">
+              <input
+                className={selectClass}
+                value={mergeNote}
+                onChange={(e) => setMergeNote(e.target.value)}
+                placeholder="Revision note (optional)"
+              />
+              <input
+                className={selectClass}
+                value={mergeTagsInput}
+                onChange={(e) => setMergeTagsInput(e.target.value)}
+                placeholder="Tags (optional, comma-separated)"
+              />
+              <select
+                className={selectClass}
+                value={mergeStatus}
+                onChange={(e) => setMergeStatus((e.target.value as RevisionStatus) || '')}
+              >
+                <option value="">No status</option>
+                {REVISION_STATUSES.map((option) => (
+                  <option key={option} value={option}>{option}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className="flex items-center gap-2 text-xs text-gray-300">
+                <span className="min-w-16 text-gray-400">After A</span>
+                <select
+                  className={selectClass}
+                  value={sourceAWillBeReplaced ? 'keep' : postMergeActionA}
+                  onChange={(e) => setPostMergeActionA(e.target.value as PostMergeAction)}
+                  disabled={sourceAWillBeReplaced || !selectedA}
+                >
+                  <option value="keep">Keep file A</option>
+                  <option value="archive">Archive file A</option>
+                  <option value="delete">Delete file A</option>
+                </select>
+              </label>
+              <label className="flex items-center gap-2 text-xs text-gray-300">
+                <span className="min-w-16 text-gray-400">After B</span>
+                <select
+                  className={selectClass}
+                  value={sourceBWillBeReplaced ? 'keep' : postMergeActionB}
+                  onChange={(e) => setPostMergeActionB(e.target.value as PostMergeAction)}
+                  disabled={sourceBWillBeReplaced || !selectedB}
+                >
+                  <option value="keep">Keep file B</option>
+                  <option value="archive">Archive file B</option>
+                  <option value="delete">Delete file B</option>
+                </select>
+              </label>
+            </div>
+            {(sourceAWillBeReplaced || sourceBWillBeReplaced) && (
+              <p className="text-xs text-gray-500">
+                The merge target always stays in place, so overwrite targets cannot be archived or deleted in the same step.
+              </p>
+            )}
+
+            {(saveSuccess || saveError) && (
+              <div className={`text-xs ${saveError ? 'text-red-400' : 'text-green-400'}`}>
+                {saveError ?? saveSuccess}
+              </div>
+            )}
+            <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-gray-700">
+              <label className="text-xs text-gray-300 shrink-0">Merge target</label>
+              <input
+                value={targetFilename ?? ''}
+                onChange={(e) => setNewFilePath(e.target.value)}
+                placeholder="merged-result.md"
+                className="flex-1 min-w-56 text-xs bg-gray-800 text-gray-200 border border-gray-600 rounded px-2 py-1 focus:outline-none focus:border-blue-500"
+              />
+              <button
+                onClick={handleFinalize}
+                disabled={!bothSelected || isSavingMerged}
+                className="px-2 py-1 rounded bg-blue-600 hover:bg-blue-500 text-xs text-white disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {isSavingMerged ? 'Saving…' : 'Finalize Merge'}
+              </button>
+              <span className={`text-xs ${unresolvedHunks > 0 ? 'text-amber-300' : 'text-gray-500'}`}>
+                {unresolvedHunks > 0 ? `${unresolvedHunks} unresolved hunk(s)` : 'All hunks resolved'}
+              </span>
+            </div>
+            {errorMessage && <p className="text-xs text-red-300">{errorMessage}</p>}
+          </div>
+        )}
       </div>
 
       {!bothSelected ? (
@@ -594,7 +597,7 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
                 </div>
               ) : (
                 <div className="flex h-full flex-col">
-                  <PreviewPane content={mergedOutput} />
+                  <PreviewPane content={mergedOutput} scrollToText={activeMergedPreviewText} />
                 </div>
               )}
             </div>

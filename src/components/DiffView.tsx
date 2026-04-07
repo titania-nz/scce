@@ -156,32 +156,59 @@ export default function DiffView({
   onMergeStateChange,
 }: DiffViewProps) {
   const diff = useMemo(() => buildPreparedDiff(contentA, contentB), [contentA, contentB]);
-  const [activeIdx, setActiveIdx] = useState(0);
+  const [internalActiveHunkId, setInternalActiveHunkId] = useState<number | null>(null);
   const [resolutions, setResolutions] = useState<Record<number, 'a' | 'b'>>({});
   const hunkRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const { hunks, mergeHunks, totalAdditions, totalRemovals, isIdentical } = diff;
+  const isControlledActiveHunk = activeHunkId !== undefined;
+  const resolvedActiveHunkId = isControlledActiveHunk ? (activeHunkId ?? null) : internalActiveHunkId;
+  const activeIdx = useMemo(() => {
+    if (isIdentical || hunks.length === 0) return -1;
+    if (typeof resolvedActiveHunkId === 'number') {
+      const nextIdx = hunks.findIndex((hunk) => hunk.id === resolvedActiveHunkId);
+      if (nextIdx >= 0) return nextIdx;
+    }
+    return 0;
+  }, [hunks, isIdentical, resolvedActiveHunkId]);
 
   useEffect(() => {
-    setActiveIdx(0);
+    setInternalActiveHunkId(null);
     setResolutions({});
   }, [contentA, contentB]);
 
   useEffect(() => {
-    if (typeof activeHunkId !== 'number') return;
-    const nextIdx = hunks.findIndex((hunk) => hunk.id === activeHunkId);
-    if (nextIdx >= 0 && nextIdx !== activeIdx) {
-      setActiveIdx(nextIdx);
-    }
-  }, [activeHunkId, activeIdx, hunks]);
-
-  useEffect(() => {
-    if (!onActiveHunkChange) return;
     if (isIdentical || hunks.length === 0) {
-      onActiveHunkChange(null);
+      if (isControlledActiveHunk) {
+        onActiveHunkChange?.(null);
+      } else {
+        setInternalActiveHunkId(null);
+      }
       return;
     }
-    onActiveHunkChange(hunks[activeIdx]?.id ?? null);
-  }, [activeIdx, hunks, isIdentical, onActiveHunkChange]);
+
+    if (typeof resolvedActiveHunkId === 'number' && hunks.some((hunk) => hunk.id === resolvedActiveHunkId)) {
+      return;
+    }
+
+    const firstHunkId = hunks[0]?.id ?? null;
+    if (isControlledActiveHunk) {
+      onActiveHunkChange?.(firstHunkId);
+    } else {
+      setInternalActiveHunkId(firstHunkId);
+    }
+  }, [hunks, isControlledActiveHunk, isIdentical, onActiveHunkChange, resolvedActiveHunkId]);
+
+  const setActiveHunk = useCallback(
+    (hunkId: number | null) => {
+      if (isControlledActiveHunk) {
+        onActiveHunkChange?.(hunkId);
+      } else {
+        setInternalActiveHunkId(hunkId);
+        onActiveHunkChange?.(hunkId);
+      }
+    },
+    [isControlledActiveHunk, onActiveHunkChange],
+  );
 
   const setHunkRef = useCallback(
     (id: number) => (el: HTMLDivElement | null) => {
@@ -192,9 +219,9 @@ export default function DiffView({
   );
 
   function navigateTo(idx: number) {
-    setActiveIdx(idx);
     const targetHunk = hunks[idx];
     if (!targetHunk) return;
+    setActiveHunk(targetHunk.id);
     hunkRefs.current.get(targetHunk.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
@@ -337,7 +364,7 @@ export default function DiffView({
               key={hunk.id}
               hunk={hunk}
               total={hunks.length}
-              isActive={hunk.id === activeIdx}
+              isActive={hunk.id === resolvedActiveHunkId}
               mergeState={mergeStateByHunk?.[hunk.id] ?? 'unresolved'}
               editedContent={editedContentByHunk?.[hunk.id] ?? ''}
               onTakeA={onTakeA}
@@ -346,8 +373,7 @@ export default function DiffView({
               onEditedContentChange={onEditedContentChange}
               hunkRef={setHunkRef(hunk.id)}
               onActivate={(hunkId) => {
-                const nextIdx = hunks.findIndex((nextHunk) => nextHunk.id === hunkId);
-                if (nextIdx >= 0) setActiveIdx(nextIdx);
+                setActiveHunk(hunkId);
               }}
             />
           ))

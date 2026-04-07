@@ -8,10 +8,11 @@ import rehypeHighlight from 'rehype-highlight';
 interface PreviewPaneProps {
   content: string;
   jumpToHeadingToken?: string;
+  scrollToText?: string | null;
 }
 
 // Main component export: this is the entry point rendered by parent routes/components.
-export default function PreviewPane({ content, jumpToHeadingToken }: PreviewPaneProps) {
+export default function PreviewPane({ content, jumpToHeadingToken, scrollToText }: PreviewPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -29,6 +30,23 @@ export default function PreviewPane({ content, jumpToHeadingToken }: PreviewPane
     if (!target) return;
     target.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, [jumpToHeadingToken]);
+
+  useEffect(() => {
+    const token = scrollToText?.trim().toLowerCase();
+    if (!token) return;
+
+    const root = containerRef.current;
+    if (!root) return;
+
+    const candidates = Array.from(root.querySelectorAll<HTMLElement>(
+      'p, li, blockquote, pre, code, h1, h2, h3, h4, h5, h6',
+    ));
+    const exact = candidates.find((node) => node.textContent?.trim().toLowerCase() === token);
+    const partial = candidates.find((node) => node.textContent?.trim().toLowerCase().includes(token));
+    const target = exact ?? partial;
+    if (!target) return;
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [content, scrollToText]);
 
   if (!content.trim()) {
     return (

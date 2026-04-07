@@ -29,6 +29,11 @@ export interface PreparedDiff extends ComputedDiff {
   stableMergedBContent: string;
 }
 
+export interface MergedPreviewRange {
+  startLine: number;
+  endLine: number;
+}
+
 const CONTEXT = 3;
 
 // Public hook/helper: called from UI code to encapsulate shared stateful behavior.
@@ -118,4 +123,54 @@ export function buildPreparedDiff(a: string, b: string): PreparedDiff {
     mergeHunks: computed.hunks,
     stableMergedBContent,
   };
+}
+
+export function buildMergedPreviewRanges(
+  diff: ComputedDiff,
+  mergeStateByHunk: Record<number, 'unresolved' | 'takeA' | 'takeB' | 'edited'>,
+  editedContentByHunk: Record<number, string>,
+): Record<number, MergedPreviewRange> {
+  if (diff.isIdentical || diff.hunks.length === 0) return {};
+
+  let sourceCursor = 0;
+  let outputCursor = 0;
+  const ranges: Record<number, MergedPreviewRange> = {};
+
+  for (const hunk of diff.hunks) {
+    outputCursor += Math.max(0, hunk.start - sourceCursor);
+    sourceCursor = hunk.end + 1;
+
+    const state = mergeStateByHunk[hunk.id] ?? 'unresolved';
+    let lineCount = 0;
+
+    if (state === 'edited') {
+      const edited = editedContentByHunk[hunk.id] ?? '';
+      lineCount = edited.length > 0 ? edited.split('\n').length : 0;
+    } else {
+      const takeB = state === 'takeB' || state === 'unresolved';
+      lineCount = hunk.lines.filter((line) => (takeB ? line.kind !== 'removed' : line.kind !== 'added')).length;
+    }
+
+    ranges[hunk.id] = {
+      startLine: outputCursor,
+      endLine: Math.max(outputCursor, outputCursor + lineCount - 1),
+    };
+    outputCursor += lineCount;
+  }
+
+  return ranges;
+}
+
+export function getMergedPreviewAnchorText(
+  lines: string[],
+  range?: MergedPreviewRange,
+): string | null {
+  if (!range) return null;
+
+  for (let index = range.startLine; index <= range.endLine; index++) {
+    const line = lines[index]?.trim();
+    if (line) return line;
+  }
+
+  return null;
 }
