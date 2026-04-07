@@ -9,18 +9,8 @@ import CompareView from './CompareView';
 import DocumentDashboard from './DocumentDashboard';
 import { useFileContent } from '@/hooks/useFileContent';
 import { useAutoSave } from '@/hooks/useAutoSave';
-<<<<<<< ours
-<<<<<<< ours
 import { useDocuments } from '@/hooks/useDocuments';
 import type { ExportFormat, PublishHistoryEntry, PublishTargetProfile, Revision, RevisionInlineNote } from '@/types';
-=======
-import { useFiles } from '@/hooks/useFiles';
-import { buildFileApiPath } from '@/lib/fileApiPath';
->>>>>>> theirs
-=======
-import { useFiles } from '@/hooks/useFiles';
-import { buildFileApiPath } from '@/lib/fileApiPath';
->>>>>>> theirs
 import { RevisionStatus } from '@/types';
 import { useFiles } from '@/hooks/useFiles';
 import { buildFileApiPath, buildFilePublishApiPath } from '@/lib/fileApiPath';
@@ -44,6 +34,7 @@ interface RevisionSummary {
   removedHeadings: number;
 }
 
+// Measure how much text was added and removed between two revision snapshots.
 function computeCharChanges(previousContent: string, nextContent: string): Pick<RevisionSummary, 'addedChars' | 'removedChars'> {
   let i = 0;
   const minLen = Math.min(previousContent.length, nextContent.length);
@@ -65,11 +56,13 @@ function computeCharChanges(previousContent: string, nextContent: string): Pick<
   };
 }
 
+// Pull out markdown headings so the app can describe structural changes, not just raw text changes.
 function extractHeadings(content: string): Set<string> {
   const matches = content.match(/^#{1,6}\s+(.+)$/gm) ?? [];
   return new Set(matches.map((value) => value.trim().toLowerCase()));
 }
 
+// Summarize the visible difference between one revision and the one before it.
 function computeRevisionSummary(previous: Revision | undefined, current: Revision): RevisionSummary {
   const previousContent = previous?.content ?? '';
   const { addedChars, removedChars } = computeCharChanges(previousContent, current.content);
@@ -139,65 +132,12 @@ const TEMPLATE_SNIPPETS: Array<{ id: string; title: string; content: (date: stri
   },
 ];
 
-<<<<<<< ours
-<<<<<<< ours
-=======
-=======
->>>>>>> theirs
-interface CommandItem {
-  id: string;
-  title: string;
-  keywords?: string[];
-  run: () => void | Promise<void>;
-}
-
-type ShortcutMap = Record<string, string>;
-
-const DEFAULT_SHORTCUTS: ShortcutMap = {
-  saveCheckpoint: 'Mod+S',
-  commandPalette: 'Mod+K',
-  createFile: 'Mod+N',
-  openFilePalette: 'Mod+O',
-  renameFile: 'Shift+Mod+R',
-  createDailyNote: 'Shift+Mod+D',
-};
-
-const SHORTCUT_STORAGE_KEY = 'editor-shortcuts-v1';
-const SHORTCUT_LABELS: Record<string, string> = {
-  saveCheckpoint: 'Save checkpoint',
-  commandPalette: 'Open command palette',
-  createFile: 'Create file',
-  openFilePalette: 'Find file',
-  renameFile: 'Rename current file',
-  createDailyNote: 'Create daily note',
-};
-
-const TEMPLATE_SNIPPETS: Array<{ id: string; title: string; content: (date: string) => string }> = [
-  {
-    id: 'meeting-notes',
-    title: 'Meeting notes',
-    content: (date) => `# Meeting Notes\n\n- Date: ${date}\n- Attendees:\n- Topic:\n\n## Agenda\n- \n\n## Notes\n- \n\n## Action Items\n- [ ] `,
-  },
-  {
-    id: 'rfc',
-    title: 'RFC',
-    content: (date) => `# RFC: \n\n- Status: Draft\n- Owner:\n- Date: ${date}\n\n## Context\n\n## Proposal\n\n## Alternatives\n\n## Risks\n\n## Rollout plan`,
-  },
-  {
-    id: 'changelog',
-    title: 'Changelog',
-    content: (date) => `# Changelog (${date})\n\n## Added\n- \n\n## Changed\n- \n\n## Fixed\n- `,
-  },
-];
-
-<<<<<<< ours
->>>>>>> theirs
-=======
->>>>>>> theirs
+// Format a date as YYYY-MM-DD for filenames and templates.
 function toDateStamp(date = new Date()): string {
   return date.toISOString().slice(0, 10);
 }
 
+// Convert a saved shortcut string like "Shift+Mod+K" into fields the keyboard handler can compare.
 function parseShortcut(shortcut: string): { key: string; shift: boolean; alt: boolean; mod: boolean } | null {
   const parts = shortcut.split('+').map((part) => part.trim()).filter(Boolean);
   if (parts.length === 0) return null;
@@ -210,6 +150,7 @@ function parseShortcut(shortcut: string): { key: string; shift: boolean; alt: bo
   };
 }
 
+// Convert a real keyboard event into the same string format used in saved shortcut settings.
 function eventToShortcut(event: KeyboardEvent): string {
   const key = event.key.length === 1 ? event.key.toUpperCase() : event.key;
   const parts: string[] = [];
@@ -220,8 +161,6 @@ function eventToShortcut(event: KeyboardEvent): string {
   return parts.join('+');
 }
 
-<<<<<<< ours
-<<<<<<< ours
 const LOCAL_DRAFT_KEY = 'scce:working-drafts:v1';
 const LOCAL_QUEUE_KEY = 'scce:checkpoint-queue:v1';
 
@@ -235,6 +174,7 @@ interface QueuedCheckpoint {
   queuedAt: string;
 }
 
+// Read a small JSON value from local storage without crashing the app on bad data.
 function readLocalJson<T>(storageKey: string, fallback: T): T {
   if (typeof window === 'undefined') return fallback;
   try {
@@ -246,15 +186,12 @@ function readLocalJson<T>(storageKey: string, fallback: T): T {
   }
 }
 
+// Save a small JSON value to local storage.
 function writeLocalJson<T>(storageKey: string, value: T): void {
   if (typeof window === 'undefined') return;
   window.localStorage.setItem(storageKey, JSON.stringify(value));
 }
 
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
 // Main component export: this is the entry point rendered by parent routes/components.
 export default function EditorPage() {
   const { files, createFile, renameFile } = useFiles();
@@ -287,8 +224,6 @@ export default function EditorPage() {
   const [capturingShortcutFor, setCapturingShortcutFor] = useState<string | null>(null);
   const [backlinks, setBacklinks] = useState<string[]>([]);
   const commandInputRef = useRef<HTMLInputElement>(null);
-<<<<<<< ours
-<<<<<<< ours
 
   const [isOffline, setIsOffline] = useState(false);
   const [queuedCheckpoints, setQueuedCheckpoints] = useState<QueuedCheckpoint[]>([]);
@@ -298,10 +233,6 @@ export default function EditorPage() {
   const [isExporting, setIsExporting] = useState(false);
   const [opsError, setOpsError] = useState<string | null>(null);
   const hasLoadedLocalStateRef = useRef(false);
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
 
   const [publishProfiles, setPublishProfiles] = useState<PublishTargetProfile[]>([]);
   const [publishProfileId, setPublishProfileId] = useState('docs-site');
@@ -482,46 +413,6 @@ export default function EditorPage() {
     if (!hasLoadedLocalStateRef.current) return;
     writeLocalJson(LOCAL_QUEUE_KEY, queuedCheckpoints);
   }, [queuedCheckpoints]);
-
-  useEffect(() => {
-    try {
-      const stored = window.localStorage.getItem(SHORTCUT_STORAGE_KEY);
-      if (!stored) return;
-      const parsed = JSON.parse(stored) as ShortcutMap;
-      setShortcuts((prev) => ({ ...prev, ...parsed }));
-    } catch {
-      // ignore malformed local settings
-    }
-  }, []);
-
-  useEffect(() => {
-    window.localStorage.setItem(SHORTCUT_STORAGE_KEY, JSON.stringify(shortcuts));
-  }, [shortcuts]);
-
-  useEffect(() => {
-    if (!commandPaletteOpen) return;
-    commandInputRef.current?.focus();
-  }, [commandPaletteOpen]);
-
-  useEffect(() => {
-    try {
-      const stored = window.localStorage.getItem(SHORTCUT_STORAGE_KEY);
-      if (!stored) return;
-      const parsed = JSON.parse(stored) as ShortcutMap;
-      setShortcuts((prev) => ({ ...prev, ...parsed }));
-    } catch {
-      // ignore malformed local settings
-    }
-  }, []);
-
-  useEffect(() => {
-    window.localStorage.setItem(SHORTCUT_STORAGE_KEY, JSON.stringify(shortcuts));
-  }, [shortcuts]);
-
-  useEffect(() => {
-    if (!commandPaletteOpen) return;
-    commandInputRef.current?.focus();
-  }, [commandPaletteOpen]);
 
   const saveWorkingCopy = useCallback(async (draftContent: string) => {
     if (!selectedFile) return;
@@ -784,176 +675,6 @@ export default function EditorPage() {
     };
   }, [isOffline, queuedCheckpoints, saveContent]);
 
-  const createNewFile = useCallback(async () => {
-    const rawName = window.prompt('New file name', 'untitled');
-    if (!rawName) return;
-    const nextName = rawName.endsWith('.md') ? rawName : `${rawName}.md`;
-    await createFile(nextName, '');
-    setSelectedFile(nextName);
-    setCommandPaletteOpen(false);
-  }, [createFile]);
-
-  const renameCurrentFile = useCallback(async () => {
-    if (!selectedFile) return;
-    const currentStem = selectedFile.replace(/\.md$/, '');
-    const rawName = window.prompt('Rename file to', currentStem);
-    if (!rawName) return;
-    const nextName = rawName.endsWith('.md') ? rawName : `${rawName}.md`;
-    await renameFile(selectedFile, nextName);
-    handleFileRenamed(selectedFile, nextName);
-    setCommandPaletteOpen(false);
-  }, [renameFile, selectedFile]);
-
-  const applyTemplate = useCallback((templateId: string) => {
-    const template = TEMPLATE_SNIPPETS.find((item) => item.id === templateId);
-    if (!template) return;
-    setContent(template.content(toDateStamp()));
-    setIsDirty(true);
-    setCommandPaletteOpen(false);
-  }, []);
-
-  const createDailyNote = useCallback(async () => {
-    const today = toDateStamp();
-    const yesterday = toDateStamp(new Date(Date.now() - 24 * 60 * 60 * 1000));
-    const tomorrow = toDateStamp(new Date(Date.now() + 24 * 60 * 60 * 1000));
-    const filename = `daily/${today}.md`;
-    const dailyTemplate = `# Daily note — ${today}\n\nPrev: [[daily/${yesterday}]]\nNext: [[daily/${tomorrow}]]\n\n## Priorities\n- \n\n## Journal\n- \n`;
-    await createFile(filename, dailyTemplate);
-    setSelectedFile(filename);
-    setCommandPaletteOpen(false);
-  }, [createFile]);
-
-  const openFilePickerFromCommand = useCallback(() => {
-    setCommandQuery('open ');
-    setCommandPaletteOpen(true);
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function computeBacklinks() {
-      if (!selectedFile || files.length === 0) {
-        setBacklinks([]);
-        return;
-      }
-
-      const exactLink = `[[${selectedFile}]]`;
-      const noExtLink = `[[${selectedFile.replace(/\.md$/, '')}]]`;
-      const found: string[] = [];
-
-      await Promise.all(
-        files.map(async (file) => {
-          if (file.name === selectedFile) return;
-          try {
-            const res = await fetch(buildFileApiPath(file.name));
-            if (!res.ok) return;
-            const payload = (await res.json()) as { content?: string };
-            const text = payload.content ?? '';
-            if (text.includes(exactLink) || text.includes(noExtLink)) {
-              found.push(file.name);
-            }
-          } catch {
-            // ignore failed backlink fetch
-          }
-        }),
-      );
-
-      if (!cancelled) {
-        found.sort((a, b) => a.localeCompare(b));
-        setBacklinks(found);
-      }
-    }
-
-    void computeBacklinks();
-    return () => {
-      cancelled = true;
-    };
-  }, [files, selectedFile]);
-
-  const createNewFile = useCallback(async () => {
-    const rawName = window.prompt('New file name', 'untitled');
-    if (!rawName) return;
-    const nextName = rawName.endsWith('.md') ? rawName : `${rawName}.md`;
-    await createFile(nextName, '');
-    setSelectedFile(nextName);
-    setCommandPaletteOpen(false);
-  }, [createFile]);
-
-  const renameCurrentFile = useCallback(async () => {
-    if (!selectedFile) return;
-    const currentStem = selectedFile.replace(/\.md$/, '');
-    const rawName = window.prompt('Rename file to', currentStem);
-    if (!rawName) return;
-    const nextName = rawName.endsWith('.md') ? rawName : `${rawName}.md`;
-    await renameFile(selectedFile, nextName);
-    handleFileRenamed(selectedFile, nextName);
-    setCommandPaletteOpen(false);
-  }, [renameFile, selectedFile]);
-
-  const applyTemplate = useCallback((templateId: string) => {
-    const template = TEMPLATE_SNIPPETS.find((item) => item.id === templateId);
-    if (!template) return;
-    setContent(template.content(toDateStamp()));
-    setIsDirty(true);
-    setCommandPaletteOpen(false);
-  }, []);
-
-  const createDailyNote = useCallback(async () => {
-    const today = toDateStamp();
-    const yesterday = toDateStamp(new Date(Date.now() - 24 * 60 * 60 * 1000));
-    const tomorrow = toDateStamp(new Date(Date.now() + 24 * 60 * 60 * 1000));
-    const filename = `daily/${today}.md`;
-    const dailyTemplate = `# Daily note — ${today}\n\nPrev: [[daily/${yesterday}]]\nNext: [[daily/${tomorrow}]]\n\n## Priorities\n- \n\n## Journal\n- \n`;
-    await createFile(filename, dailyTemplate);
-    setSelectedFile(filename);
-    setCommandPaletteOpen(false);
-  }, [createFile]);
-
-  const openFilePickerFromCommand = useCallback(() => {
-    setCommandQuery('open ');
-    setCommandPaletteOpen(true);
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function computeBacklinks() {
-      if (!selectedFile || files.length === 0) {
-        setBacklinks([]);
-        return;
-      }
-
-      const exactLink = `[[${selectedFile}]]`;
-      const noExtLink = `[[${selectedFile.replace(/\.md$/, '')}]]`;
-      const found: string[] = [];
-
-      await Promise.all(
-        files.map(async (file) => {
-          if (file.name === selectedFile) return;
-          try {
-            const res = await fetch(buildFileApiPath(file.name));
-            if (!res.ok) return;
-            const payload = (await res.json()) as { content?: string };
-            const text = payload.content ?? '';
-            if (text.includes(exactLink) || text.includes(noExtLink)) {
-              found.push(file.name);
-            }
-          } catch {
-            // ignore failed backlink fetch
-          }
-        }),
-      );
-
-      if (!cancelled) {
-        found.sort((a, b) => a.localeCompare(b));
-        setBacklinks(found);
-      }
-    }
-
-    void computeBacklinks();
-    return () => {
-      cancelled = true;
-    };
-  }, [files, selectedFile]);
-
   function handleContentChange(val: string) {
     setContent(val);
     setIsDirty(true);
@@ -974,8 +695,6 @@ export default function EditorPage() {
   }, [content, saveWorkingCopy]);
 
   // Keyboard shortcuts
-<<<<<<< ours
-<<<<<<< ours
   const handleRestoreDraft = useCallback((filename: string) => {
     const nextDraft = recoverableDrafts[filename];
     if (typeof nextDraft !== 'string') return;
@@ -1074,10 +793,6 @@ export default function EditorPage() {
   }, [queuedCheckpoints, workingDraftByFile]);
 
   // Ctrl+S to save checkpoint revision
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (capturingShortcutFor) {
@@ -1090,19 +805,6 @@ export default function EditorPage() {
         setShortcuts((prev) => ({ ...prev, [capturingShortcutFor]: nextShortcut }));
         setCapturingShortcutFor(null);
         return;
-<<<<<<< ours
-<<<<<<< ours
-=======
->>>>>>> theirs
-      }
-
-      if (e.key === 'Escape' && commandPaletteOpen) {
-        setCommandPaletteOpen(false);
-        return;
-<<<<<<< ours
-      }
-
-=======
       }
 
       if (e.key === 'Escape' && commandPaletteOpen) {
@@ -1110,11 +812,6 @@ export default function EditorPage() {
         return;
       }
 
->>>>>>> theirs
-=======
-      }
-
->>>>>>> theirs
       const entries = Object.entries(shortcuts);
       const matched = entries.find(([, shortcut]) => {
         const parsed = parseShortcut(shortcut);
@@ -1211,92 +908,6 @@ export default function EditorPage() {
   }
 
   const lastCheckpointAt = selectedFile ? lastCheckpointAtByFile[selectedFile] ?? null : null;
-  const normalizedQuery = commandQuery.trim().toLowerCase();
-  const openPrefix = normalizedQuery.startsWith('open ');
-  const openTerm = openPrefix ? normalizedQuery.slice(5).trim() : '';
-  const fileMatches = files
-    .filter((file) => {
-      if (!openPrefix) return true;
-      return file.name.toLowerCase().includes(openTerm);
-    })
-    .slice(0, 10);
-
-  const commandItems = useMemo<CommandItem[]>(() => {
-    const base: CommandItem[] = [
-      {
-        id: 'save',
-        title: 'Save checkpoint',
-        keywords: ['save'],
-        run: () => handleSaveCheckpoint(),
-      },
-      {
-        id: 'create',
-        title: 'Create file',
-        keywords: ['new'],
-        run: () => createNewFile(),
-      },
-      {
-        id: 'rename',
-        title: 'Rename current file',
-        keywords: ['rename'],
-        run: () => renameCurrentFile(),
-      },
-      {
-        id: 'daily-note',
-        title: 'Create daily note',
-        keywords: ['journal', 'today'],
-        run: () => createDailyNote(),
-      },
-      {
-        id: 'shortcuts',
-        title: 'Customize keyboard shortcuts',
-        keywords: ['hotkeys', 'keys'],
-        run: () => {
-          setShortcutEditorOpen(true);
-          setCommandPaletteOpen(false);
-        },
-      },
-    ];
-
-    TEMPLATE_SNIPPETS.forEach((template) => {
-      base.push({
-        id: `template-${template.id}`,
-        title: `Insert template: ${template.title}`,
-        keywords: ['template', 'snippet'],
-        run: () => applyTemplate(template.id),
-      });
-    });
-
-    fileMatches.forEach((file) => {
-      base.push({
-        id: `open-${file.name}`,
-        title: `Open: ${file.name}`,
-        keywords: ['open', 'file'],
-        run: () => {
-          void handleFileSelect(file.name);
-          setCommandPaletteOpen(false);
-          setCommandQuery('');
-        },
-      });
-    });
-
-    if (!normalizedQuery) return base;
-    return base.filter((command) => {
-      const haystack = [command.title, ...(command.keywords ?? [])].join(' ').toLowerCase();
-      return haystack.includes(normalizedQuery);
-    });
-  }, [
-    applyTemplate,
-    createDailyNote,
-    createNewFile,
-    fileMatches,
-    handleFileSelect,
-    handleSaveCheckpoint,
-    normalizedQuery,
-    renameCurrentFile,
-  ]);
-<<<<<<< ours
-
   const toggleRevisionSelection = useCallback((revisionId: string) => {
     setSelectedRevisionIds((prev) =>
       prev.includes(revisionId) ? prev.filter((id) => id !== revisionId) : [...prev, revisionId],
@@ -1314,9 +925,8 @@ export default function EditorPage() {
       const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
-      const extension = format === 'docx' ? 'docx' : format;
       anchor.href = url;
-      anchor.download = selectedFile.replace(/\.md$/i, `.${extension}`);
+      anchor.download = selectedFile.replace(/\.md$/i, `.${format === 'docx' ? 'docx' : format}`);
       anchor.click();
       URL.revokeObjectURL(url);
     } catch (error) {
@@ -1356,6 +966,7 @@ export default function EditorPage() {
       setIsPublishing(false);
     }
   }, [latestRevisionStatus, publishProfileId, selectedFile]);
+
   const normalizedQuery = commandQuery.trim().toLowerCase();
   const openPrefix = normalizedQuery.startsWith('open ');
   const openTerm = openPrefix ? normalizedQuery.slice(5).trim() : '';
@@ -1452,8 +1063,6 @@ export default function EditorPage() {
       setStatus(next[0]);
     }
   }
-=======
->>>>>>> theirs
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-950 text-gray-100">
@@ -1829,8 +1438,6 @@ export default function EditorPage() {
           </div>
         </div>
       )}
-<<<<<<< ours
-<<<<<<< ours
 
       {showRecoveryPanel && (
         <div className="fixed inset-0 z-40 bg-black/55 flex items-center justify-center p-4">
@@ -1919,10 +1526,6 @@ export default function EditorPage() {
           </div>
         </div>
       )}
-=======
->>>>>>> theirs
-=======
->>>>>>> theirs
     </div>
   );
 }
