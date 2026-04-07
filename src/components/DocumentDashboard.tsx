@@ -95,7 +95,7 @@ export default function DocumentDashboard({
             {isOpen && (
               <div className="px-3 pb-3 space-y-2">
                 <div className="text-[11px] text-gray-400">
-                  Draft: {entry.branches.draftRevisionId ?? '—'} · Accepted: {entry.branches.acceptedRevisionId ?? '—'} · Canonical: {entry.branches.canonicalRevisionId ?? '—'}
+                  Review branches: Draft {entry.branches.draftRevisionId ?? '—'} · Accepted {entry.branches.acceptedRevisionId ?? '—'} · Canonical {entry.branches.canonicalRevisionId ?? '—'}
                 </div>
 
                 <div className="text-[11px] text-gray-400">
@@ -116,6 +116,17 @@ export default function DocumentDashboard({
                           {revision.id}
                         </button>
                         <span className="text-gray-500">{new Date(revision.createdAt).toLocaleString()}</span>
+                        {revision.status && (
+                          <span className={`px-1 py-0.5 rounded ${
+                            revision.status === 'Locked'
+                              ? 'bg-amber-900/60 text-amber-200'
+                              : revision.status === 'Editing'
+                                ? 'bg-blue-900/60 text-blue-200'
+                                : 'bg-emerald-900/60 text-emerald-200'
+                          }`}>
+                            {revision.status}
+                          </span>
+                        )}
                         {entry.branches.canonicalRevisionId === revision.id && <span className="px-1 py-0.5 rounded bg-emerald-900/60 text-emerald-200">Canonical</span>}
                         {entry.branches.acceptedRevisionId === revision.id && <span className="px-1 py-0.5 rounded bg-indigo-900/60 text-indigo-200">Accepted</span>}
                         {entry.branches.draftRevisionId === revision.id && <span className="px-1 py-0.5 rounded bg-amber-900/60 text-amber-200">Draft</span>}

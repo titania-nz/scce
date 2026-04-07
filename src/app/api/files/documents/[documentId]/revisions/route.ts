@@ -4,6 +4,7 @@ import {
   createDocumentRootRecord,
   listRevisionsByDocumentId,
 } from '@/lib/documentStorage';
+import { isRevisionStatus } from '@/lib/revisionStatus';
 
 type Params = { params: Promise<{ documentId: string }> };
 
@@ -32,10 +33,14 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   try {
     const body = await request.json();
-    const { content, notes = [], documentName, collaboration } = body;
+    const { content, notes = [], documentName, collaboration, status } = body;
 
     if (typeof content !== 'string') {
       return NextResponse.json({ error: 'Invalid content' }, { status: 400 });
+    }
+
+    if (status !== undefined && status !== null && !isRevisionStatus(status)) {
+      return NextResponse.json({ error: 'Status must be Writing, Editing, or Locked' }, { status: 400 });
     }
 
     try {
@@ -59,6 +64,7 @@ export async function POST(request: NextRequest, { params }: Params) {
 
     const revision = await appendImmutableRevision(documentId, {
       content,
+      status,
       notes: Array.isArray(notes) ? notes : [],
       collaboration: typeof collaboration === 'object' && collaboration ? collaboration : undefined,
     });

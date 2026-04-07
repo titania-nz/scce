@@ -8,8 +8,7 @@ interface ToolbarProps {
   isOffline: boolean;
   queuedSyncCount: number;
   mobileView: 'edit' | 'preview';
-  compareMode: boolean;
-  documentMode: boolean;
+  workspaceMode: 'editor' | 'compare' | 'documents';
   onMobileViewChange: (view: 'edit' | 'preview') => void;
   onSaveCheckpoint: () => void;
   canSaveCheckpoint: boolean;
@@ -19,8 +18,9 @@ interface ToolbarProps {
   onOpenStorageHealth: () => void;
   onExportBackup: () => void;
   onToggleSidebar: () => void;
-  onToggleCompare: () => void;
-  onToggleDocumentDashboard: () => void;
+  onWorkspaceModeChange: (mode: 'editor' | 'compare' | 'documents') => void;
+  isUtilitiesOpen: boolean;
+  onToggleUtilities: () => void;
 }
 
 // Helper function: keeps a small, testable transformation isolated from UI side effects.
@@ -41,8 +41,7 @@ export default function Toolbar({
   isOffline,
   queuedSyncCount,
   mobileView,
-  compareMode,
-  documentMode,
+  workspaceMode,
   onMobileViewChange,
   onSaveCheckpoint,
   canSaveCheckpoint,
@@ -52,8 +51,9 @@ export default function Toolbar({
   onOpenStorageHealth,
   onExportBackup,
   onToggleSidebar,
-  onToggleCompare,
-  onToggleDocumentDashboard,
+  onWorkspaceModeChange,
+  isUtilitiesOpen,
+  onToggleUtilities,
 }: ToolbarProps) {
   return (
     <div className="flex items-center gap-2 px-3 h-12 bg-gray-800 border-b border-gray-700 shrink-0">
@@ -93,57 +93,40 @@ export default function Toolbar({
         {queuedSyncCount > 0 ? ` • ${queuedSyncCount} queued` : ''}
       </span>
 
-      <button
-        onClick={onOpenRecoveryPanel}
-        className="hidden lg:inline-flex px-2.5 py-1 text-xs rounded bg-gray-700 text-gray-200 hover:bg-gray-600 shrink-0"
-      >
-        Restore drafts
-      </button>
+      <div className="hidden md:flex items-center gap-1 rounded border border-gray-700 bg-gray-900/50 p-1 shrink-0">
+        {(['editor', 'compare', 'documents'] as const).map((mode) => (
+          <button
+            key={mode}
+            onClick={() => onWorkspaceModeChange(mode)}
+            className={`px-2.5 py-1 text-xs rounded transition-colors ${
+              workspaceMode === mode
+                ? 'bg-blue-600 text-white'
+                : 'text-gray-300 hover:bg-gray-700'
+            }`}
+          >
+            {mode === 'editor' ? 'Editor' : mode === 'compare' ? 'Compare' : 'Documents'}
+          </button>
+        ))}
+      </div>
 
-      <button
-        onClick={onOpenStorageHealth}
-        className="hidden lg:inline-flex px-2.5 py-1 text-xs rounded bg-gray-700 text-gray-200 hover:bg-gray-600 shrink-0"
-      >
-        Storage health
-      </button>
-
-      <button
-        onClick={onExportBackup}
-        className="hidden lg:inline-flex px-2.5 py-1 text-xs rounded bg-gray-700 text-gray-200 hover:bg-gray-600 shrink-0"
-      >
-        Export backup
-      </button>
-
-      {/* Compare toggle */}
-      <button
-        onClick={onToggleDocumentDashboard}
-        title="Document dashboard"
-        className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded transition-colors shrink-0 ${
-          documentMode
-            ? 'bg-purple-600 text-white hover:bg-purple-500'
-            : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-        }`}
-      >
-        Documents
-      </button>
-
-      <button
-        onClick={onToggleCompare}
-        title="Compare two files (A/B)"
-        className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded transition-colors shrink-0 ${
-          compareMode
-            ? 'bg-blue-600 text-white hover:bg-blue-500'
-            : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-        }`}
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
-        </svg>
-        Compare
-      </button>
+      <div className="relative shrink-0">
+        <button
+          onClick={onToggleUtilities}
+          className="px-2.5 py-1 text-xs rounded bg-gray-700 text-gray-200 hover:bg-gray-600"
+        >
+          Utilities
+        </button>
+        {isUtilitiesOpen && (
+          <div className="absolute right-0 top-9 z-30 w-44 rounded border border-gray-700 bg-gray-900 p-1 shadow-xl">
+            <button onClick={onOpenRecoveryPanel} className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800">Restore drafts</button>
+            <button onClick={onOpenStorageHealth} className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800">Storage health</button>
+            <button onClick={onExportBackup} className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800">Export backup</button>
+          </div>
+        )}
+      </div>
 
       {/* Mobile Edit/Preview tabs */}
-      <div className={`md:hidden flex rounded overflow-hidden border border-gray-600 ${compareMode ? 'hidden' : ''}`}>
+      <div className={`md:hidden flex rounded overflow-hidden border border-gray-600 ${workspaceMode !== 'editor' ? 'hidden' : ''}`}>
         <button
           onClick={() => onMobileViewChange('edit')}
           className={`px-3 py-1 text-xs transition-colors ${
@@ -167,7 +150,7 @@ export default function Toolbar({
       </div>
 
       {/* Working draft actions */}
-      {filename && !compareMode && (
+      {filename && workspaceMode === 'editor' && (
         <>
           <button
             onClick={onContinueWorkingDraft}

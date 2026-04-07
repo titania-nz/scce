@@ -190,6 +190,7 @@ export interface CreateDocumentInput {
 export interface CreateRevisionInput {
   content: string;
   createdAt?: string;
+  status?: RevisionStatus;
   notes?: RevisionNote[];
   collaboration?: Partial<CollaborationState>;
 }

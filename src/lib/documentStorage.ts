@@ -17,11 +17,13 @@ import {
   RevisionNotification,
   RevisionNote,
   RevisionPresence,
+  RevisionStatus,
   ReviewRequest,
 } from '@/types';
 import { getBlobStore, isNetlifyRuntime } from '@/lib/netlifyRuntime';
 import { getNotesDir, resolveSafePath } from '@/lib/notesPath';
 import { listNoteFiles } from '@/lib/noteIndexStorage';
+import { readRevisions } from '@/lib/revisionStorage';
 
 const DOCUMENTS_DIRNAME = '.documents';
 const DOCUMENT_META_KEY = 'document.json';
@@ -344,6 +346,7 @@ export async function appendImmutableRevision(
     documentId,
     createdAt,
     content: input.content,
+    status: input.status,
     notes: input.notes ?? [],
     collaboration: {
       ...collaboration,
@@ -651,9 +654,14 @@ export async function listDocumentDashboardEntries(): Promise<DocumentDashboardE
       try {
         const document = await readDocumentRootRecord(documentId);
         const revisions = await listRevisionsByDocumentId(documentId);
+        const sourceRevisions = document.sourceFilename ? await readRevisions(document.sourceFilename) : [];
+        const statusByContent = new Map<string, RevisionStatus | undefined>(
+          sourceRevisions.map((revision) => [revision.content, revision.status]),
+        );
         const revisionsWithThreads = await Promise.all(
           revisions.map(async (revision) => ({
             ...revision,
+            status: revision.status ?? statusByContent.get(revision.content),
             notes: await listRevisionComments(documentId, revision.id),
           })),
         );
@@ -665,5 +673,5 @@ export async function listDocumentDashboardEntries(): Promise<DocumentDashboardE
     }),
   );
 
-  return entries.filter((entry): entry is DocumentDashboardEntry => Boolean(entry));
+  return entries.flatMap((entry) => (entry ? [entry] : []));
 }

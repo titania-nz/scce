@@ -6,6 +6,7 @@ import { useFiles } from '@/hooks/useFiles';
 import { useFileContent } from '@/hooks/useFileContent';
 import { buildFileApiPath } from '@/lib/fileApiPath';
 import { computeDiff } from '@/lib/diffUtils';
+import { REVISION_STATUSES } from '@/lib/revisionStatus';
 import { RevisionStatus } from '@/types';
 import DiffView, { HunkMergeState } from './DiffView';
 
@@ -324,9 +325,9 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
             onChange={(e) => setMergeStatus((e.target.value as RevisionStatus) || '')}
           >
             <option value="">No status</option>
-            <option value="accepted">Accepted</option>
-            <option value="rejected">Rejected</option>
-            <option value="needs-review">Needs review</option>
+            {REVISION_STATUSES.map((option) => (
+              <option key={option} value={option}>{option}</option>
+            ))}
           </select>
         </div>
 

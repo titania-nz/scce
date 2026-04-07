@@ -14,17 +14,16 @@ import type { ExportFormat, PublishHistoryEntry, PublishTargetProfile, Revision,
 import { RevisionStatus } from '@/types';
 import { useFiles } from '@/hooks/useFiles';
 import { buildFileApiPath, buildFilePublishApiPath } from '@/lib/fileApiPath';
+import { REVISION_STATUSES } from '@/lib/revisionStatus';
 
 // CodeMirror accesses browser APIs — must be dynamically imported with ssr:false
 const EditorPane = dynamic(() => import('./EditorPane'), { ssr: false });
 
-const DEFAULT_STATUS_PIPELINE = ['Draft', 'In Review', 'Approved', 'Published'];
 const DEFAULT_REQUIRED_FIELDS = {
   note: true,
   status: true,
   tags: false,
 };
-const PIPELINE_STORAGE_KEY = 'scce.statusPipeline';
 const REQUIRED_FIELDS_STORAGE_KEY = 'scce.requiredMetaFields';
 
 interface RevisionSummary {
@@ -123,7 +122,7 @@ const TEMPLATE_SNIPPETS: Array<{ id: string; title: string; content: (date: stri
   {
     id: 'rfc',
     title: 'RFC',
-    content: (date) => `# RFC: \n\n- Status: Draft\n- Owner:\n- Date: ${date}\n\n## Context\n\n## Proposal\n\n## Alternatives\n\n## Risks\n\n## Rollout plan`,
+    content: (date) => `# RFC: \n\n- Status: Writing\n- Owner:\n- Date: ${date}\n\n## Context\n\n## Proposal\n\n## Alternatives\n\n## Risks\n\n## Rollout plan`,
   },
   {
     id: 'changelog',
@@ -200,13 +199,12 @@ export default function EditorPage() {
   const [isDirty, setIsDirty] = useState(false);
   const [mobileView, setMobileView] = useState<'edit' | 'preview'>('edit');
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [compareMode, setCompareMode] = useState(false);
-  const [documentMode, setDocumentMode] = useState(false);
+  const [workspaceMode, setWorkspaceMode] = useState<'editor' | 'compare' | 'documents'>('editor');
+  const [inspectorTab, setInspectorTab] = useState<'checkpoint' | 'timeline' | 'publish' | 'links'>('checkpoint');
+  const [utilitiesOpen, setUtilitiesOpen] = useState(false);
   const [revisionNote, setRevisionNote] = useState('');
   const [tagsInput, setTagsInput] = useState('');
   const [status, setStatus] = useState<RevisionStatus | ''>('');
-  const [statusPipeline, setStatusPipeline] = useState<string[]>(DEFAULT_STATUS_PIPELINE);
-  const [statusPipelineInput, setStatusPipelineInput] = useState(DEFAULT_STATUS_PIPELINE.join(' → '));
   const [requiredFields, setRequiredFields] = useState(DEFAULT_REQUIRED_FIELDS);
   const [checkpointWarning, setCheckpointWarning] = useState<string | null>(null);
   const [knownTags, setKnownTags] = useState<string[]>([]);
@@ -258,14 +256,16 @@ export default function EditorPage() {
     addComment,
   } = useDocuments();
   const prevFileRef = useRef<string | null>(null);
+  const latestRevision = revisions.at(-1);
+  const isLockedRevision = latestRevision?.status === 'Locked';
 
   const parsedTags = useMemo(
     () => tagsInput.split(',').map((tag) => tag.trim()).filter(Boolean),
     [tagsInput],
   );
   const statusOptions = useMemo(
-    () => statusPipeline.map((value) => ({ value, label: value })),
-    [statusPipeline],
+    () => REVISION_STATUSES.map((value) => ({ value, label: value })),
+    [],
   );
   const missingRequiredFields = useMemo(() => {
     const missing: string[] = [];
@@ -286,22 +286,6 @@ export default function EditorPage() {
   );
 
   useEffect(() => {
-    const rawPipeline = window.localStorage.getItem(PIPELINE_STORAGE_KEY);
-    if (rawPipeline) {
-      try {
-        const parsed = JSON.parse(rawPipeline) as string[];
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const cleaned = parsed.map((item) => item.trim()).filter(Boolean).slice(0, 12);
-          if (cleaned.length > 0) {
-            setStatusPipeline(cleaned);
-            setStatusPipelineInput(cleaned.join(' → '));
-          }
-        }
-      } catch {
-        // noop
-      }
-    }
-
     const rawRequired = window.localStorage.getItem(REQUIRED_FIELDS_STORAGE_KEY);
     if (rawRequired) {
       try {
@@ -316,10 +300,6 @@ export default function EditorPage() {
       }
     }
   }, []);
-
-  useEffect(() => {
-    window.localStorage.setItem(PIPELINE_STORAGE_KEY, JSON.stringify(statusPipeline));
-  }, [statusPipeline]);
 
   useEffect(() => {
     window.localStorage.setItem(REQUIRED_FIELDS_STORAGE_KEY, JSON.stringify(requiredFields));
@@ -454,10 +434,10 @@ export default function EditorPage() {
   useEffect(() => {
     if (selectedFile !== prevFileRef.current) {
       prevFileRef.current = selectedFile;
-      const latestRevision = revisions.at(-1);
-      setRevisionNote(latestRevision?.note ?? '');
-      setStatus(latestRevision?.status ?? '');
-      setTagsInput((latestRevision?.tags ?? []).join(', '));
+      const currentLatestRevision = revisions.at(-1);
+      setRevisionNote(currentLatestRevision?.note ?? '');
+      setStatus(currentLatestRevision?.status ?? '');
+      setTagsInput((currentLatestRevision?.tags ?? []).join(', '));
 
       if (!selectedFile) {
         setContent('');
@@ -468,7 +448,10 @@ export default function EditorPage() {
       }
 
       const draft = workingDraftByFile[selectedFile];
-      if (typeof draft === 'string') {
+      if (currentLatestRevision?.status === 'Locked') {
+        setContent(loadedContent);
+        setIsDirty(false);
+      } else if (typeof draft === 'string') {
         setContent(draft);
         setIsDirty(draft !== loadedContent);
       } else {
@@ -489,10 +472,10 @@ export default function EditorPage() {
     if (isDirty) return;
 
     const draft = workingDraftByFile[selectedFile];
-    if (typeof draft === 'string') return;
+    if (latestRevision?.status !== 'Locked' && typeof draft === 'string') return;
 
     setContent(loadedContent);
-  }, [isDirty, loadedContent, selectedFile, workingDraftByFile]);
+  }, [isDirty, latestRevision?.status, loadedContent, selectedFile, workingDraftByFile]);
 
   useEffect(() => {
     async function loadPublishMetadata() {
@@ -714,23 +697,71 @@ export default function EditorPage() {
   }, [isOffline, queuedCheckpoints, saveContent]);
 
   function handleContentChange(val: string) {
+    if (isLockedRevision) return;
     setContent(val);
     setIsDirty(true);
   }
 
   const handleSaveCheckpoint = useCallback(async () => {
     if (!selectedFile || !isDirty) return;
+    if (isLockedRevision) {
+      setCheckpointWarning('Locked versions cannot be changed directly. Unlock to create a new version first.');
+      return;
+    }
     if (missingRequiredFields.length > 0) {
       setCheckpointWarning(`Complete required fields: ${missingRequiredFields.join(', ')}`);
       return;
     }
     setCheckpointWarning(null);
     await saveNow(content);
-  }, [content, isDirty, missingRequiredFields, saveNow, selectedFile]);
+  }, [content, isDirty, isLockedRevision, missingRequiredFields, saveNow, selectedFile]);
 
   const handleContinueWorkingDraft = useCallback(async () => {
+    if (isLockedRevision) {
+      setOpsError('Locked versions cannot store a new working draft. Unlock to create a new version first.');
+      return;
+    }
     await saveWorkingCopy(content);
-  }, [content, saveWorkingCopy]);
+  }, [content, isLockedRevision, saveWorkingCopy]);
+
+  const handleUnlockAndCreateVersion = useCallback(async () => {
+    if (!selectedFile || !latestRevision || latestRevision.status !== 'Locked') return;
+
+    const confirmed = window.confirm(
+      `Unlock "${selectedFile}" and create a new editable version from the locked content?\n\nThis keeps the locked version intact and starts a new version in Writing status.`,
+    );
+    if (!confirmed) return;
+
+    if (isOffline) {
+      setOpsError('Reconnect before unlocking a locked version so the new version can be created safely.');
+      return;
+    }
+
+    const nextNote = `Unlocked from locked version ${latestRevision.id}`;
+    try {
+      setOpsError(null);
+      await saveContent(latestRevision.content, {
+        note: nextNote,
+        tags: latestRevision.tags ?? [],
+        status: 'Writing',
+      });
+      setRevisionNote(nextNote);
+      setTagsInput((latestRevision.tags ?? []).join(', '));
+      setStatus('Writing');
+      setContent(latestRevision.content);
+      setIsDirty(false);
+      setWorkingDraftByFile((prev) => {
+        if (!selectedFile || !(selectedFile in prev)) return prev;
+        const next = { ...prev };
+        delete next[selectedFile];
+        return next;
+      });
+      setCheckpointWarning(null);
+      setInspectorTab('checkpoint');
+    } catch (error) {
+      setOpsError(error instanceof Error ? error.message : 'Could not create a new version from the locked revision.');
+    }
+  }, [isOffline, latestRevision, saveContent, selectedFile]);
 
   // Keyboard shortcuts
   const handleRestoreDraft = useCallback((filename: string) => {
@@ -738,10 +769,14 @@ export default function EditorPage() {
     if (typeof nextDraft !== 'string') return;
     setWorkingDraftByFile((prev) => ({ ...prev, [filename]: nextDraft }));
     if (selectedFile === filename) {
+      if (isLockedRevision) {
+        setOpsError('This file is locked. Unlock it first to restore the draft as a new editable version.');
+        return;
+      }
       setContent(nextDraft);
       setIsDirty(true);
     }
-  }, [recoverableDrafts, selectedFile]);
+  }, [isLockedRevision, recoverableDrafts, selectedFile]);
 
   const handleDismissRecoveredDraft = useCallback((filename: string) => {
     setRecoverableDrafts((prev) => {
@@ -1089,18 +1124,6 @@ export default function EditorPage() {
     normalizedQuery,
     renameCurrentFile,
   ]);
-  function applyStatusPipelineInput() {
-    const next = statusPipelineInput
-      .split(/->|→/)
-      .map((item) => item.trim())
-      .filter(Boolean)
-      .slice(0, 12);
-    if (next.length === 0) return;
-    setStatusPipeline(next);
-    if (status && !next.includes(status)) {
-      setStatus(next[0]);
-    }
-  }
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-950 text-gray-100">
@@ -1138,25 +1161,34 @@ export default function EditorPage() {
           isOffline={isOffline}
           queuedSyncCount={queuedCheckpoints.length}
           mobileView={mobileView}
-          compareMode={compareMode}
-          documentMode={documentMode}
+          workspaceMode={workspaceMode}
           onMobileViewChange={setMobileView}
           onSaveCheckpoint={handleSaveCheckpoint}
-          canSaveCheckpoint={canSaveCheckpoint}
-          checkpointBlockReason={missingRequiredFields.length > 0 ? `Required: ${missingRequiredFields.join(', ')}` : undefined}
+          canSaveCheckpoint={canSaveCheckpoint && !isLockedRevision}
+          checkpointBlockReason={
+            isLockedRevision
+              ? 'Locked versions must be unlocked into a new version before saving.'
+              : missingRequiredFields.length > 0
+                ? `Required: ${missingRequiredFields.join(', ')}`
+                : undefined
+          }
           onContinueWorkingDraft={handleContinueWorkingDraft}
-          onOpenRecoveryPanel={() => setShowRecoveryPanel(true)}
-          onOpenStorageHealth={() => setShowStorageHealth(true)}
-          onExportBackup={handleExportBackup}
+          onOpenRecoveryPanel={() => {
+            setUtilitiesOpen(false);
+            setShowRecoveryPanel(true);
+          }}
+          onOpenStorageHealth={() => {
+            setUtilitiesOpen(false);
+            setShowStorageHealth(true);
+          }}
+          onExportBackup={() => {
+            setUtilitiesOpen(false);
+            void handleExportBackup();
+          }}
           onToggleSidebar={() => setSidebarOpen((o) => !o)}
-          onToggleCompare={() => {
-            setCompareMode((m) => !m);
-            setDocumentMode(false);
-          }}
-          onToggleDocumentDashboard={() => {
-            setDocumentMode((mode) => !mode);
-            setCompareMode(false);
-          }}
+          onWorkspaceModeChange={setWorkspaceMode}
+          isUtilitiesOpen={utilitiesOpen}
+          onToggleUtilities={() => setUtilitiesOpen((open) => !open)}
         />
 
         {opsError && (
@@ -1170,7 +1202,7 @@ export default function EditorPage() {
           </div>
         )}
 
-        {documentMode ? (
+        {workspaceMode === 'documents' ? (
           <DocumentDashboard
             documents={documents}
             isLoading={isDocumentsLoading}
@@ -1178,9 +1210,12 @@ export default function EditorPage() {
             onSetAccepted={(documentId, revisionId) => promoteRevision(documentId, revisionId, 'accepted')}
             onSetDraft={(documentId, revisionId) => promoteRevision(documentId, revisionId, 'draft')}
             onAddComment={addComment}
-            onSelectFile={setSelectedFile}
+            onSelectFile={(filename) => {
+              setSelectedFile(filename);
+              setWorkspaceMode('editor');
+            }}
           />
-        ) : compareMode ? (
+        ) : workspaceMode === 'compare' ? (
           <CompareView
             selectedFile={selectedFile}
             onFileSelect={setSelectedFile}
@@ -1201,7 +1236,7 @@ export default function EditorPage() {
           <div className="flex-1 flex overflow-hidden">
             <div className="flex-1 flex overflow-hidden">
               <div className={`flex-1 flex overflow-hidden ${mobileView === 'preview' ? 'hidden md:flex' : 'flex'}`}>
-                <EditorPane value={content} onChange={handleContentChange} />
+                <EditorPane value={content} onChange={handleContentChange} readOnly={Boolean(isLockedRevision)} />
               </div>
 
               <div className="hidden md:block w-px bg-gray-700 shrink-0" />
@@ -1212,201 +1247,229 @@ export default function EditorPage() {
             </div>
 
             <aside className="hidden lg:flex w-80 border-l border-gray-700 bg-gray-900/70 flex-col overflow-hidden">
-              <div className="p-3 border-b border-gray-700 space-y-3">
-                <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Revision details</h2>
-
-                <label className="block text-xs text-gray-300">
-                  Status pipeline
-                  <div className="mt-1 flex gap-1.5">
-                    <input
-                      className="flex-1 bg-gray-800 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-100"
-                      value={statusPipelineInput}
-                      onChange={(e) => setStatusPipelineInput(e.target.value)}
-                      placeholder="Draft → In Review → Approved → Published"
-                    />
+              <div className="border-b border-gray-700 p-2">
+                <div className="grid grid-cols-4 gap-1">
+                  {([
+                    ['checkpoint', 'Checkpoint'],
+                    ['timeline', 'Timeline'],
+                    ['publish', 'Publish'],
+                    ['links', 'Links'],
+                  ] as const).map(([tabId, label]) => (
                     <button
-                      type="button"
-                      className="px-2 py-1 text-[11px] rounded bg-gray-700 hover:bg-gray-600 text-gray-100"
-                      onClick={applyStatusPipelineInput}
-                    >
-                      Apply
-                    </button>
-                  </div>
-                </label>
-
-                <label className="block text-xs text-gray-300">
-                  Note
-                  <textarea
-                    className="mt-1 w-full bg-gray-800 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-100 resize-y min-h-20"
-                    value={revisionNote}
-                    onChange={(e) => setRevisionNote(e.target.value)}
-                    placeholder="Why this revision exists..."
-                  />
-                </label>
-
-                <label className="block text-xs text-gray-300">
-                  Status
-                  <select
-                    className="mt-1 w-full bg-gray-800 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-100"
-                    value={status}
-                    onChange={(e) => setStatus((e.target.value as RevisionStatus) || '')}
-                  >
-                    <option value="">No status</option>
-                    {statusOptions.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="block text-xs text-gray-300">
-                  Tags (comma separated)
-                  <input
-                    className="mt-1 w-full bg-gray-800 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-100"
-                    value={tagsInput}
-                    onChange={(e) => setTagsInput(e.target.value)}
-                    placeholder="planning, scope"
-                    list="known-tags"
-                  />
-                  <datalist id="known-tags">
-                    {knownTags.map((tag) => (
-                      <option key={tag} value={tag} />
-                    ))}
-                  </datalist>
-                </label>
-
-                <fieldset className="border border-gray-700 rounded p-2">
-                  <legend className="px-1 text-[11px] uppercase tracking-wide text-gray-400">Required before checkpoint</legend>
-                  <div className="mt-1 space-y-1.5 text-xs text-gray-200">
-                    <label className="flex items-center gap-2">
-                      <input type="checkbox" checked={requiredFields.note} onChange={(e) => setRequiredFields((prev) => ({ ...prev, note: e.target.checked }))} />
-                      Note
-                    </label>
-                    <label className="flex items-center gap-2">
-                      <input type="checkbox" checked={requiredFields.status} onChange={(e) => setRequiredFields((prev) => ({ ...prev, status: e.target.checked }))} />
-                      Status
-                    </label>
-                    <label className="flex items-center gap-2">
-                      <input type="checkbox" checked={requiredFields.tags} onChange={(e) => setRequiredFields((prev) => ({ ...prev, tags: e.target.checked }))} />
-                      At least one tag
-                    </label>
-                  </div>
-                </fieldset>
-
-                {checkpointWarning && (
-                  <p className="text-[11px] text-amber-300 bg-amber-900/30 border border-amber-700 rounded px-2 py-1.5">
-                    {checkpointWarning}
-                  </p>
-                )}
-              </div>
-
-              <div className="p-3 border-b border-gray-700 space-y-3">
-                <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Publishing pipeline</h2>
-                <div className="grid grid-cols-3 gap-1.5">
-                  <button onClick={() => handleExport('html')} className="rounded bg-gray-800 hover:bg-gray-700 px-2 py-1 text-[11px] text-gray-200">Export HTML</button>
-                  <button onClick={() => handleExport('pdf')} className="rounded bg-gray-800 hover:bg-gray-700 px-2 py-1 text-[11px] text-gray-200">Export PDF</button>
-                  <button onClick={() => handleExport('docx')} className="rounded bg-gray-800 hover:bg-gray-700 px-2 py-1 text-[11px] text-gray-200">Export DOCX</button>
-                </div>
-
-                <label className="block text-xs text-gray-300">
-                  Publish target
-                  <select
-                    className="mt-1 w-full bg-gray-800 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-100"
-                    value={publishProfileId}
-                    onChange={(e) => setPublishProfileId(e.target.value)}
-                  >
-                    {(publishProfiles.length
-                      ? publishProfiles
-                      : [{ id: 'docs-site', label: 'Docs site', description: 'Default docs site profile', type: 'docs-site' as const }]).map((profile) => (
-                      <option key={profile.id} value={profile.id}>{profile.label}</option>
-                    ))}
-                  </select>
-                </label>
-
-                <button
-                  onClick={handlePublish}
-                  disabled={isPublishing || latestRevisionStatus !== 'accepted'}
-                  className="w-full rounded bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-700 disabled:text-gray-500 px-2 py-1.5 text-xs text-white"
-                  title={latestRevisionStatus !== 'accepted' ? 'Mark latest revision as Accepted to enable one-click publish.' : 'Publish selected target from approved status'}
-                >
-                  {isPublishing ? 'Publishing…' : 'One-click publish (approved only)'}
-                </button>
-
-                <p className="text-[11px] text-gray-400">
-                  Latest status: <span className="text-gray-200">{latestRevisionStatus || 'none'}</span>
-                </p>
-                {publishMessage && <p className="text-[11px] text-blue-300">{publishMessage}</p>}
-              </div>
-
-              <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400 sticky top-0 bg-gray-900 py-1">
-                  Revision timeline
-                </h3>
-
-                {revisions.length === 0 ? (
-                  <p className="text-xs text-gray-500">No revisions yet. Save this file to create one.</p>
-                ) : (
-                  [...revisions].reverse().map((revision) => (
-                    <button
-                      key={revision.id}
-                      className={`w-full text-left p-2 rounded border hover:bg-gray-800 ${
-                        selectedRevisionIds.includes(revision.id)
-                          ? 'border-blue-500 bg-blue-950/30'
-                          : 'border-gray-700 bg-gray-900'
+                      key={tabId}
+                      onClick={() => setInspectorTab(tabId)}
+                      className={`rounded px-2 py-1 text-[11px] ${
+                        inspectorTab === tabId ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
                       }`}
-                      onClick={() => {
-                        setRevisionNote(revision.note ?? '');
-                        setStatus(revision.status ?? '');
-                        setTagsInput((revision.tags ?? []).join(', '));
-                        toggleRevisionSelection(revision.id);
-                      }}
                     >
-                      <p className="text-[11px] text-gray-500">
-                        {new Date(revision.createdAt).toLocaleString()}
-                      </p>
-                      <p className="text-xs text-gray-200 mt-1 line-clamp-3">
-                        {revision.note || 'No note'}
-                      </p>
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {revision.status && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-900 text-blue-200">
-                            {revision.status}
-                          </span>
-                        )}
-                        {revision.tags?.map((tag) => (
-                          <span key={`${revision.id}-${tag}`} className="text-[10px] px-1.5 py-0.5 rounded bg-gray-700 text-gray-200">
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                      <p className="mt-1 text-[10px] text-gray-400">
-                        +{revisionSummaries[revision.id]?.addedChars ?? 0} / -{revisionSummaries[revision.id]?.removedChars ?? 0} chars
-                        {' · '}
-                        H+{revisionSummaries[revision.id]?.addedHeadings ?? 0} / H-{revisionSummaries[revision.id]?.removedHeadings ?? 0}
-                      </p>
+                      {label}
                     </button>
-                  ))
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-3 space-y-3">
+                {inspectorTab === 'checkpoint' && (
+                  <>
+                    {isLockedRevision && latestRevision && (
+                      <div className="rounded border border-amber-700 bg-amber-950/30 p-3 text-xs text-amber-100 space-y-2">
+                        <p>This file is locked at revision {latestRevision.id}. Keep it intact unless you intentionally branch a new version.</p>
+                        <button
+                          onClick={() => void handleUnlockAndCreateVersion()}
+                          className="rounded bg-amber-500 px-2.5 py-1.5 text-xs font-medium text-black hover:bg-amber-400"
+                        >
+                          Unlock and create new version
+                        </button>
+                      </div>
+                    )}
+
+                    <div className="space-y-3">
+                      <label className="block text-xs text-gray-300">
+                        Note
+                        <textarea
+                          className="mt-1 w-full bg-gray-800 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-100 resize-y min-h-20"
+                          value={revisionNote}
+                          onChange={(e) => setRevisionNote(e.target.value)}
+                          placeholder="Why this revision exists..."
+                        />
+                      </label>
+
+                      <label className="block text-xs text-gray-300">
+                        Status
+                        <select
+                          className="mt-1 w-full bg-gray-800 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-100"
+                          value={status}
+                          onChange={(e) => setStatus((e.target.value as RevisionStatus) || '')}
+                        >
+                          <option value="">No status</option>
+                          {statusOptions.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label className="block text-xs text-gray-300">
+                        Tags (comma separated)
+                        <input
+                          className="mt-1 w-full bg-gray-800 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-100"
+                          value={tagsInput}
+                          onChange={(e) => setTagsInput(e.target.value)}
+                          placeholder="planning, scope"
+                          list="known-tags"
+                        />
+                        <datalist id="known-tags">
+                          {knownTags.map((tag) => (
+                            <option key={tag} value={tag} />
+                          ))}
+                        </datalist>
+                      </label>
+
+                      <details className="rounded border border-gray-700 p-2">
+                        <summary className="cursor-pointer text-[11px] uppercase tracking-wide text-gray-400">Workflow settings</summary>
+                        <fieldset className="mt-2">
+                          <legend className="text-[11px] text-gray-500">Required before checkpoint</legend>
+                          <div className="mt-2 space-y-1.5 text-xs text-gray-200">
+                            <label className="flex items-center gap-2">
+                              <input type="checkbox" checked={requiredFields.note} onChange={(e) => setRequiredFields((prev) => ({ ...prev, note: e.target.checked }))} />
+                              Note
+                            </label>
+                            <label className="flex items-center gap-2">
+                              <input type="checkbox" checked={requiredFields.status} onChange={(e) => setRequiredFields((prev) => ({ ...prev, status: e.target.checked }))} />
+                              Status
+                            </label>
+                            <label className="flex items-center gap-2">
+                              <input type="checkbox" checked={requiredFields.tags} onChange={(e) => setRequiredFields((prev) => ({ ...prev, tags: e.target.checked }))} />
+                              At least one tag
+                            </label>
+                          </div>
+                        </fieldset>
+                      </details>
+
+                      {checkpointWarning && (
+                        <p className="text-[11px] text-amber-300 bg-amber-900/30 border border-amber-700 rounded px-2 py-1.5">
+                          {checkpointWarning}
+                        </p>
+                      )}
+                    </div>
+                  </>
                 )}
 
-                <div className="mt-4 border-t border-gray-700 pt-3 space-y-2">
-                  <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Backlinks</h3>
-                  {selectedFile ? (
-                    backlinks.length === 0 ? (
-                      <p className="text-xs text-gray-500">No backlinks yet. Add references like [[{selectedFile.replace(/\.md$/, '')}]].</p>
+                {inspectorTab === 'timeline' && (
+                  <>
+                    <div className="text-[11px] text-gray-400">
+                      {selectedRevisionIds.length === 2 ? 'Two revisions selected. Open Compare to review the differences.' : 'Select up to two revisions to inspect and compare.'}
+                    </div>
+                    {revisions.length === 0 ? (
+                      <p className="text-xs text-gray-500">No revisions yet. Save this file to create one.</p>
                     ) : (
-                      backlinks.map((file) => (
+                      [...revisions].reverse().map((revision) => (
                         <button
-                          key={file}
-                          onClick={() => void handleFileSelect(file)}
-                          className="w-full text-left text-xs px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-200"
+                          key={revision.id}
+                          className={`w-full text-left p-2 rounded border hover:bg-gray-800 ${
+                            selectedRevisionIds.includes(revision.id)
+                              ? 'border-blue-500 bg-blue-950/30'
+                              : 'border-gray-700 bg-gray-900'
+                          }`}
+                          onClick={() => {
+                            setRevisionNote(revision.note ?? '');
+                            setStatus(revision.status ?? '');
+                            setTagsInput((revision.tags ?? []).join(', '));
+                            toggleRevisionSelection(revision.id);
+                          }}
                         >
-                          {file}
+                          <p className="text-[11px] text-gray-500">{new Date(revision.createdAt).toLocaleString()}</p>
+                          <p className="mt-1 text-xs text-gray-200 line-clamp-3">{revision.note || 'No note'}</p>
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {revision.status && (
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                                revision.status === 'Locked' ? 'bg-amber-900 text-amber-200' : revision.status === 'Editing' ? 'bg-blue-900 text-blue-200' : 'bg-emerald-900 text-emerald-200'
+                              }`}>
+                                {revision.status}
+                              </span>
+                            )}
+                            {revision.tags?.map((tag) => (
+                              <span key={`${revision.id}-${tag}`} className="text-[10px] px-1.5 py-0.5 rounded bg-gray-700 text-gray-200">{tag}</span>
+                            ))}
+                          </div>
+                          <p className="mt-1 text-[10px] text-gray-400">
+                            +{revisionSummaries[revision.id]?.addedChars ?? 0} / -{revisionSummaries[revision.id]?.removedChars ?? 0} chars · H+{revisionSummaries[revision.id]?.addedHeadings ?? 0} / H-{revisionSummaries[revision.id]?.removedHeadings ?? 0}
+                          </p>
                         </button>
                       ))
-                    )
-                  ) : (
-                    <p className="text-xs text-gray-500">Select a file to see backlinks.</p>
-                  )}
-                </div>
+                    )}
+                  </>
+                )}
+
+                {inspectorTab === 'publish' && (
+                  <>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      <button onClick={() => handleExport('html')} className="rounded bg-gray-800 hover:bg-gray-700 px-2 py-1 text-[11px] text-gray-200">Export HTML</button>
+                      <button onClick={() => handleExport('pdf')} className="rounded bg-gray-800 hover:bg-gray-700 px-2 py-1 text-[11px] text-gray-200">Export PDF</button>
+                      <button onClick={() => handleExport('docx')} className="rounded bg-gray-800 hover:bg-gray-700 px-2 py-1 text-[11px] text-gray-200">Export DOCX</button>
+                    </div>
+
+                    <label className="block text-xs text-gray-300">
+                      Publish target
+                      <select
+                        className="mt-1 w-full bg-gray-800 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-100"
+                        value={publishProfileId}
+                        onChange={(e) => setPublishProfileId(e.target.value)}
+                      >
+                        {(publishProfiles.length
+                          ? publishProfiles
+                          : [{ id: 'docs-site', label: 'Docs site', description: 'Default docs site profile', type: 'docs-site' as const }]).map((profile) => (
+                            <option key={profile.id} value={profile.id}>{profile.label}</option>
+                          ))}
+                      </select>
+                    </label>
+
+                    <button
+                      onClick={handlePublish}
+                      disabled={isPublishing || latestRevisionStatus !== 'Locked'}
+                      className="w-full rounded bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-700 disabled:text-gray-500 px-2 py-1.5 text-xs text-white"
+                      title={latestRevisionStatus !== 'Locked' ? 'Lock the latest revision before publishing.' : 'Publish the locked version'}
+                    >
+                      {isPublishing ? 'Publishing…' : 'Publish locked version'}
+                    </button>
+
+                    <p className="text-[11px] text-gray-400">Latest status: <span className="text-gray-200">{latestRevisionStatus || 'none'}</span></p>
+                    {publishMessage && <p className="text-[11px] text-blue-300">{publishMessage}</p>}
+                    {publishHistory.length > 0 && (
+                      <div className="space-y-2 border-t border-gray-700 pt-3">
+                        <h3 className="text-[11px] uppercase tracking-wide text-gray-400">Recent publish history</h3>
+                        {publishHistory.slice(0, 5).map((entry) => (
+                          <div key={entry.id} className="rounded border border-gray-700 bg-gray-900 p-2 text-[11px] text-gray-300">
+                            <div>{entry.outcome}</div>
+                            <div className="mt-1 text-gray-500">{new Date(entry.createdAt).toLocaleString()}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {inspectorTab === 'links' && (
+                  <>
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400">Backlinks</h3>
+                    {selectedFile ? (
+                      backlinks.length === 0 ? (
+                        <p className="text-xs text-gray-500">No backlinks yet. Add references like [[{selectedFile.replace(/\.md$/, '')}]].</p>
+                      ) : (
+                        backlinks.map((file) => (
+                          <button
+                            key={file}
+                            onClick={() => void handleFileSelect(file)}
+                            className="w-full text-left text-xs px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-200"
+                          >
+                            {file}
+                          </button>
+                        ))
+                      )
+                    ) : (
+                      <p className="text-xs text-gray-500">Select a file to see backlinks.</p>
+                    )}
+                  </>
+                )}
               </div>
             </aside>
           </div>

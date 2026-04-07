@@ -9,6 +9,7 @@ import { EditorView } from '@codemirror/view';
 interface EditorPaneProps {
   value: string;
   onChange: (value: string) => void;
+  readOnly?: boolean;
 }
 
 const extensions = [
@@ -17,7 +18,7 @@ const extensions = [
 ];
 
 // Main component export: this is the entry point rendered by parent routes/components.
-export default function EditorPane({ value, onChange }: EditorPaneProps) {
+export default function EditorPane({ value, onChange, readOnly = false }: EditorPaneProps) {
   return (
     <div className="flex-1 overflow-hidden flex flex-col">
       <CodeMirror
@@ -35,6 +36,8 @@ export default function EditorPane({ value, onChange }: EditorPaneProps) {
           allowMultipleSelections: false,
           indentOnInput: true,
         }}
+        editable={!readOnly}
+        readOnly={readOnly}
       />
     </div>
   );
