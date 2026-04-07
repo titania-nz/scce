@@ -32,6 +32,7 @@ export interface FolderDeleteResponse {
 export interface FileCategory {
   document: string;
   chapter: string;
+  isPrimary?: boolean;
 }
 
 export type RevisionStatus = 'Writing' | 'Editing' | 'Locked';

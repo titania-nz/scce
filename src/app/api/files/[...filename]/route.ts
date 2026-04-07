@@ -48,6 +48,7 @@ function parseCategory(input: unknown): FileCategory | null {
   const category = input as Partial<FileCategory>;
   const document = typeof category.document === 'string' ? category.document.trim() : '';
   const chapter = typeof category.chapter === 'string' ? category.chapter.trim() : '';
+  const isPrimary = category.isPrimary === true;
 
   if (!document && !chapter) return null;
   if ((document || chapter) && (document.length > 120 || chapter.length > 120)) {
@@ -57,6 +58,7 @@ function parseCategory(input: unknown): FileCategory | null {
   return {
     document: document || 'Ungrouped',
     chapter: chapter || 'General',
+    isPrimary,
   };
 }
 

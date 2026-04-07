@@ -3,6 +3,7 @@ import path from 'path';
 import type { FileCategory } from '@/types';
 import { isMissingBlobValue, readBlobText } from '@/lib/blobValue';
 import { getBlobStore, isNetlifyRuntime } from '@/lib/netlifyRuntime';
+import { listNoteFiles } from '@/lib/noteIndexStorage';
 import { getNotesDir } from '@/lib/notesPath';
 
 const FILE_CATEGORIES_DIR = '.file-categories';
@@ -22,13 +23,31 @@ function getLocalFileCategoryPath(filename: string): string {
 function normalizeFileCategory(input: Partial<FileCategory> | null | undefined): FileCategory | null {
   const document = typeof input?.document === 'string' ? input.document.trim() : '';
   const chapter = typeof input?.chapter === 'string' ? input.chapter.trim() : '';
+  const isPrimary = input?.isPrimary === true;
 
   if (!document && !chapter) return null;
 
   return {
     document: document || 'Ungrouped',
     chapter: chapter || 'General',
+    isPrimary,
   };
+}
+
+async function clearPrimaryInCategoryGroup(filename: string, category: FileCategory): Promise<void> {
+  const files = await listNoteFiles();
+
+  await Promise.all(
+    files.map(async (file) => {
+      if (file.name === filename) return;
+
+      const existing = await readFileCategory(file.name);
+      if (!existing?.isPrimary) return;
+      if (existing.document !== category.document || existing.chapter !== category.chapter) return;
+
+      await writeFileCategory(file.name, { ...existing, isPrimary: false });
+    }),
+  );
 }
 
 export async function readFileCategory(filename: string): Promise<FileCategory | null> {
@@ -63,6 +82,10 @@ export async function writeFileCategory(filename: string, category: Partial<File
   if (!normalized) {
     await deleteFileCategory(filename);
     return null;
+  }
+
+  if (normalized.isPrimary) {
+    await clearPrimaryInCategoryGroup(filename, normalized);
   }
 
   if (isNetlifyRuntime) {

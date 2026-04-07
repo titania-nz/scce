@@ -5,6 +5,7 @@ interface ToolbarProps {
   isDirty: boolean;
   isSaving: boolean;
   lastCheckpointAt: string | null;
+  isSidebarOpen: boolean;
   isOffline: boolean;
   queuedSyncCount: number;
   mobileView: 'edit' | 'preview';
@@ -38,6 +39,7 @@ export default function Toolbar({
   isDirty,
   isSaving,
   lastCheckpointAt,
+  isSidebarOpen,
   isOffline,
   queuedSyncCount,
   mobileView,
@@ -55,17 +57,21 @@ export default function Toolbar({
   isUtilitiesOpen,
   onToggleUtilities,
 }: ToolbarProps) {
+  const sidebarToggleLabel = isSidebarOpen ? 'Collapse sidebar' : 'Expand sidebar';
+
   return (
     <div className="flex items-center gap-2 px-3 h-12 bg-gray-800 border-b border-gray-700 shrink-0">
-      {/* Hamburger - visible on mobile only */}
       <button
         onClick={onToggleSidebar}
-        className="md:hidden text-gray-400 hover:text-white p-1 rounded transition-colors"
-        aria-label="Toggle sidebar"
+        className="flex items-center gap-2 rounded border border-gray-700 bg-gray-900/50 px-2 py-1.5 text-gray-300 transition-colors hover:bg-gray-700 hover:text-white shrink-0"
+        aria-label={sidebarToggleLabel}
+        aria-expanded={isSidebarOpen}
+        title={sidebarToggleLabel}
       >
         <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
         </svg>
+        <span className="hidden md:inline text-xs font-medium">Files</span>
       </button>
 
       {/* Filename + status */}

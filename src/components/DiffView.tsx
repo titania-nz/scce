@@ -11,12 +11,14 @@ interface DiffViewProps {
   contentB: string;
   filenameA: string;
   filenameB: string;
+  activeHunkId?: number | null;
   mergeStateByHunk?: Record<number, HunkMergeState>;
   editedContentByHunk?: Record<number, string>;
   onTakeA?: (hunkId: number) => void;
   onTakeB?: (hunkId: number) => void;
   onEditHunk?: (hunkId: number) => void;
   onEditedContentChange?: (hunkId: number, value: string) => void;
+  onActiveHunkChange?: (hunkId: number | null) => void;
   actionLabel?: string;
   actionHint?: string;
   actionDisabled?: boolean;
@@ -27,7 +29,7 @@ interface DiffViewProps {
 function DiffLineRow({ line }: { line: DiffLine }) {
   const lineNumClass = 'w-10 shrink-0 text-right select-none text-gray-600 tabular-nums';
 
-  let rowClass = 'flex font-mono text-xs leading-5';
+  let rowClass = 'flex min-w-0 font-mono text-xs leading-5';
   let prefixClass = 'w-5 shrink-0 text-center select-none';
   let prefix = ' ';
 
@@ -62,6 +64,7 @@ function HunkBlock({
   onEditHunk,
   onEditedContentChange,
   hunkRef,
+  onActivate,
 }: {
   hunk: DiffHunk;
   total: number;
@@ -73,11 +76,12 @@ function HunkBlock({
   onEditHunk?: (hunkId: number) => void;
   onEditedContentChange?: (hunkId: number, value: string) => void;
   hunkRef: (el: HTMLDivElement | null) => void;
+  onActivate?: (hunkId: number) => void;
 }) {
   const isResolved = mergeState !== 'unresolved';
 
   return (
-    <div ref={hunkRef}>
+    <div ref={hunkRef} className="min-w-0" onClick={() => onActivate?.(hunk.id)}>
       <div
         className={`flex items-center px-3 py-0.5 text-xs font-mono text-gray-500 bg-gray-900 border-y border-gray-700 ${isActive ? 'border-l-2 border-l-blue-500' : ''}`}
       >
@@ -137,12 +141,14 @@ export default function DiffView({
   contentB,
   filenameA,
   filenameB,
+  activeHunkId,
   mergeStateByHunk,
   editedContentByHunk,
   onTakeA,
   onTakeB,
   onEditHunk,
   onEditedContentChange,
+  onActiveHunkChange,
   actionLabel,
   actionHint,
   actionDisabled = false,
@@ -153,11 +159,29 @@ export default function DiffView({
   const [activeIdx, setActiveIdx] = useState(0);
   const [resolutions, setResolutions] = useState<Record<number, 'a' | 'b'>>({});
   const hunkRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+  const { hunks, mergeHunks, totalAdditions, totalRemovals, isIdentical } = diff;
 
   useEffect(() => {
     setActiveIdx(0);
     setResolutions({});
   }, [contentA, contentB]);
+
+  useEffect(() => {
+    if (typeof activeHunkId !== 'number') return;
+    const nextIdx = hunks.findIndex((hunk) => hunk.id === activeHunkId);
+    if (nextIdx >= 0 && nextIdx !== activeIdx) {
+      setActiveIdx(nextIdx);
+    }
+  }, [activeHunkId, activeIdx, hunks]);
+
+  useEffect(() => {
+    if (!onActiveHunkChange) return;
+    if (isIdentical || hunks.length === 0) {
+      onActiveHunkChange(null);
+      return;
+    }
+    onActiveHunkChange(hunks[activeIdx]?.id ?? null);
+  }, [activeIdx, hunks, isIdentical, onActiveHunkChange]);
 
   const setHunkRef = useCallback(
     (id: number) => (el: HTMLDivElement | null) => {
@@ -169,10 +193,37 @@ export default function DiffView({
 
   function navigateTo(idx: number) {
     setActiveIdx(idx);
-    hunkRefs.current.get(idx)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const targetHunk = hunks[idx];
+    if (!targetHunk) return;
+    hunkRefs.current.get(targetHunk.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
-  const { hunks, mergeHunks, totalAdditions, totalRemovals, isIdentical } = diff;
+  useEffect(() => {
+    if (isIdentical || hunks.length === 0) return;
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+
+      const target = event.target;
+      if (target instanceof HTMLElement) {
+        const tagName = target.tagName;
+        if (target.isContentEditable || tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT') return;
+      }
+
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        navigateTo(Math.max(0, activeIdx - 1));
+      }
+
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        navigateTo(Math.min(hunks.length - 1, activeIdx + 1));
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [activeIdx, hunks.length, isIdentical]);
 
   const mergedContentFromResolutions = useMemo(() => {
     const chunks = diffLines(contentA, contentB);
@@ -230,8 +281,8 @@ export default function DiffView({
   ]);
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-gray-950">
-      <div className="shrink-0 flex items-center gap-3 px-3 h-10 bg-gray-900 border-b border-gray-700 text-xs sticky top-0 z-10">
+    <div className="flex-1 min-w-0 flex flex-col overflow-hidden bg-gray-950">
+      <div className="shrink-0 flex min-w-0 items-center gap-3 px-3 h-10 bg-gray-900 border-b border-gray-700 text-xs sticky top-0 z-10">
         <span className="text-green-400 font-mono">+{totalAdditions}</span>
         <span className="text-red-400 font-mono">-{totalRemovals}</span>
 
@@ -277,7 +328,7 @@ export default function DiffView({
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="min-w-0 flex-1 overflow-y-auto">
         {isIdentical ? (
           <div className="flex-1 flex items-center justify-center h-full text-gray-400 text-sm">Files are identical</div>
         ) : (
@@ -294,6 +345,10 @@ export default function DiffView({
               onEditHunk={onEditHunk}
               onEditedContentChange={onEditedContentChange}
               hunkRef={setHunkRef(hunk.id)}
+              onActivate={(hunkId) => {
+                const nextIdx = hunks.findIndex((nextHunk) => nextHunk.id === hunkId);
+                if (nextIdx >= 0) setActiveIdx(nextIdx);
+              }}
             />
           ))
         )}

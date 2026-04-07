@@ -98,6 +98,13 @@ const DEFAULT_META: RevisionMeta = DEFAULT_REVISION_META;
 const SAVED_FILTERS_STORAGE_KEY = 'scce.savedSidebarFilters';
 const ROOT_FOLDER_SENTINEL = '__ROOT__';
 
+function compareVisibleFiles(a: VisibleFileItem, b: VisibleFileItem): number {
+  const aPrimary = a.file.category?.isPrimary === true;
+  const bPrimary = b.file.category?.isPrimary === true;
+  if (aPrimary !== bPrimary) return aPrimary ? -1 : 1;
+  return a.baseName.localeCompare(b.baseName);
+}
+
 // Helper function: keeps a small, testable transformation isolated from UI side effects.
 function getCurrentWeekRange(): { from: string; to: string } {
   const now = new Date();
@@ -369,13 +376,13 @@ function createFolderTree(items: VisibleFileItem[], explicitFolders: string[]): 
 
   function sortNode(node: FileTreeNode) {
     node.folders.sort((a, b) => a.name.localeCompare(b.name));
-    node.files.sort((a, b) => a.baseName.localeCompare(b.baseName));
+    node.files.sort(compareVisibleFiles);
     node.folders.forEach(sortNode);
   }
 
   rootFolders.forEach(sortNode);
   rootFolders.sort((a, b) => a.name.localeCompare(b.name));
-  rootFiles.sort((a, b) => a.baseName.localeCompare(b.baseName));
+  rootFiles.sort(compareVisibleFiles);
 
   return { folders: rootFolders, rootFiles };
 }
@@ -472,6 +479,7 @@ export default function Sidebar({
   const [categorizingFile, setCategorizingFile] = useState<string | null>(null);
   const [categoryDocumentValue, setCategoryDocumentValue] = useState('');
   const [categoryChapterValue, setCategoryChapterValue] = useState('');
+  const [categoryPrimaryValue, setCategoryPrimaryValue] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [chapterSearch, setChapterSearch] = useState('');
   const [metaSearch, setMetaSearch] = useState('');
@@ -1058,6 +1066,7 @@ export default function Sidebar({
     setCategorizingFile(file.name);
     setCategoryDocumentValue(file.category?.document ?? category.document);
     setCategoryChapterValue(file.category?.chapter ?? category.chapter);
+    setCategoryPrimaryValue(file.category?.isPrimary === true);
     setRenamingFile(null);
     setRenamingFolder(null);
   }
@@ -1166,6 +1175,7 @@ export default function Sidebar({
           : {
               document: document || 'Ungrouped',
               chapter: chapter || 'General',
+              isPrimary: categoryPrimaryValue,
             },
       );
       setCategorizingFile(null);
@@ -1252,6 +1262,15 @@ export default function Sidebar({
                 }}
               />
             </div>
+            <label className="flex items-center gap-2 text-xs text-gray-200">
+              <input
+                type="checkbox"
+                checked={categoryPrimaryValue}
+                onChange={(e) => setCategoryPrimaryValue(e.target.checked)}
+                className="accent-blue-500"
+              />
+              Set as primary file for this story/chapter
+            </label>
             <div className="flex gap-2">
               <button
                 type="button"
@@ -1312,6 +1331,31 @@ export default function Sidebar({
               )}
               {!selectionMode && (
                 <div className="ml-auto flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                  {!revision.file.category?.isPrimary && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const resolved = getResolvedFileStructure(revision.file);
+                        void updateFileCategory(revision.file.name, {
+                          document: revision.file.category?.document ?? resolved.document,
+                          chapter: revision.file.category?.chapter ?? resolved.chapter,
+                          isPrimary: true,
+                        }).catch((err: unknown) => {
+                          const updateError = err as { message?: string };
+                          setError(updateError.message ?? 'Could not set primary file');
+                        });
+                      }}
+                      className="text-gray-400 hover:text-amber-300 p-0.5"
+                      title="Set as primary file"
+                      aria-label={`Set ${revision.file.name} as primary file`}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.52 4.674a1 1 0 00.95.69h4.914c.969 0 1.371 1.24.588 1.81l-3.976 2.889a1 1 0 00-.364 1.118l1.52 4.674c.3.922-.755 1.688-1.539 1.118l-3.976-2.889a1 1 0 00-1.176 0l-3.976 2.889c-.783.57-1.838-.196-1.539-1.118l1.52-4.674a1 1 0 00-.364-1.118L2.557 10.1c-.783-.57-.38-1.81.588-1.81h4.914a1 1 0 00.95-.69l1.52-4.674z" />
+                      </svg>
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={(e) => {
@@ -1367,6 +1411,11 @@ export default function Sidebar({
                 {revision.file.category && (
                   <span className="ml-2 rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] text-blue-200">
                     Categorised
+                  </span>
+                )}
+                {revision.file.category?.isPrimary && (
+                  <span className="ml-2 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-200">
+                    Primary
                   </span>
                 )}
               </div>

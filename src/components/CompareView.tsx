@@ -1,14 +1,15 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import dynamic from 'next/dynamic';
 import { useFiles } from '@/hooks/useFiles';
 import { useFileContent } from '@/hooks/useFileContent';
 import { buildFileApiPath } from '@/lib/fileApiPath';
 import { computeDiff } from '@/lib/diffUtils';
 import { REVISION_STATUSES } from '@/lib/revisionStatus';
+import { findAvailableVersionedFilename } from '@/lib/versionedFilename';
 import { RevisionStatus } from '@/types';
 import DiffView, { HunkMergeState } from './DiffView';
+import PreviewPane from './PreviewPane';
 
 interface CompareViewProps {
   selectedFile?: string | null;
@@ -16,16 +17,24 @@ interface CompareViewProps {
   onDirtyChange?: (dirty: boolean) => void;
 }
 
-const EditorPane = dynamic(() => import('./EditorPane'), { ssr: false });
+type PostMergeAction = 'keep' | 'archive' | 'delete';
+type MergedOutputView = 'raw' | 'rich';
+type MergedPreviewRange = { startLine: number; endLine: number };
+
+function buildArchivePath(filename: string): string {
+  return `archive/${filename}`;
+}
 
 // Main component export: this is the entry point rendered by parent routes/components.
 export default function CompareView({ selectedFile = null, onFileSelect, onDirtyChange }: CompareViewProps) {
-  const { files, createFile, mutate: mutateFiles } = useFiles();
+  const { files, createFile, deleteFile, renameFile, mutate: mutateFiles } = useFiles();
   const [selectedA, setSelectedA] = useState<string | null>(selectedFile);
   const [selectedB, setSelectedB] = useState<string | null>(null);
   const [revisionA, setRevisionA] = useState<string>('latest');
   const [revisionB, setRevisionB] = useState<string>('latest');
   const [destination, setDestination] = useState<'overwrite-a' | 'overwrite-b' | 'new-path'>('overwrite-a');
+  const [postMergeActionA, setPostMergeActionA] = useState<PostMergeAction>('keep');
+  const [postMergeActionB, setPostMergeActionB] = useState<PostMergeAction>('keep');
   const [newFilePath, setNewFilePath] = useState('');
   const [isFinalizing, setIsFinalizing] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -40,7 +49,10 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
   const [isSavingMerged, setIsSavingMerged] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
+  const [mergedOutputView, setMergedOutputView] = useState<MergedOutputView>('raw');
+  const [activeHunkId, setActiveHunkId] = useState<number | null>(null);
   const pendingSaveRef = useRef<{ filename: string; content: string } | null>(null);
+  const mergedPreviewRef = useRef<HTMLDivElement>(null);
 
   const {
     content: contentA,
@@ -89,6 +101,8 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
     if (destination === 'new-path') return newFilePath.trim();
     return selectedA ?? '';
   }, [destination, newFilePath, selectedA, selectedB]);
+  const sourceAWillBeReplaced = Boolean(selectedA) && selectedA === targetFilename.trim();
+  const sourceBWillBeReplaced = Boolean(selectedB) && selectedB === targetFilename.trim();
 
   useEffect(() => {
     setMergeStateByHunk(() =>
@@ -141,6 +155,50 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
     setMergedOutput(mergedOutputDraft);
   }, [mergedOutputDraft]);
 
+  const mergedPreviewRanges = useMemo<Record<number, MergedPreviewRange>>(() => {
+    if (!effectiveContentA && !effectiveContentB) return {};
+    if (diff.isIdentical || diff.hunks.length === 0) return {};
+
+    let sourceCursor = 0;
+    let outputCursor = 0;
+    const ranges: Record<number, MergedPreviewRange> = {};
+
+    for (const hunk of diff.hunks) {
+      outputCursor += Math.max(0, hunk.start - sourceCursor);
+      sourceCursor = hunk.end + 1;
+
+      const state = mergeStateByHunk[hunk.id] ?? 'unresolved';
+      let lineCount = 0;
+
+      if (state === 'edited') {
+        const edited = editedContentByHunk[hunk.id] ?? '';
+        lineCount = edited.length > 0 ? edited.split('\n').length : 0;
+      } else {
+        const takeB = state === 'takeB' || state === 'unresolved';
+        lineCount = hunk.lines.filter((line) => (takeB ? line.kind !== 'removed' : line.kind !== 'added')).length;
+      }
+
+      ranges[hunk.id] = {
+        startLine: outputCursor,
+        endLine: Math.max(outputCursor, outputCursor + lineCount - 1),
+      };
+      outputCursor += lineCount;
+    }
+
+    return ranges;
+  }, [diff, editedContentByHunk, effectiveContentA, effectiveContentB, mergeStateByHunk]);
+
+  const mergedOutputLines = useMemo(() => mergedOutput.split('\n'), [mergedOutput]);
+
+  useEffect(() => {
+    if (activeHunkId === null || mergedOutputView !== 'raw') return;
+    const root = mergedPreviewRef.current;
+    if (!root) return;
+
+    const target = root.querySelector<HTMLElement>(`[data-merged-preview-hunk="${activeHunkId}"]`);
+    target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [activeHunkId, mergedOutput, mergedOutputView]);
+
   useEffect(() => {
     setUnresolvedHunks(unresolvedCount);
   }, [unresolvedCount]);
@@ -166,6 +224,9 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
       .map((tag) => tag.trim())
       .filter(Boolean);
 
+    const fileNames = files.map((file) => file.name);
+    const cleanupSummary: string[] = [];
+
     const payload = {
       content: mergedOutput,
       note: mergeNote || `Merged ${selectedA} and ${selectedB}`,
@@ -179,6 +240,8 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
     setSaveSuccess(null);
 
     try {
+      let savedFilename = filename;
+
       if (destination === 'overwrite-a' && selectedA) {
         await saveA(mergedOutput, payload);
       } else if (destination === 'overwrite-b' && selectedB) {
@@ -187,13 +250,8 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
         const existingFile = files.find((file) => file.name === filename);
         if (!existingFile) {
           const created = await createFile(filename, mergedOutput);
-          const createdName = created?.name ?? filename;
+          savedFilename = created?.name ?? filename;
           await mutateFiles();
-          onFileSelect?.(createdName);
-          setSaveSuccess(`Merged output saved to ${createdName}.`);
-          setMergedDirty(false);
-          onDirtyChange?.(false);
-          return;
         } else {
           const response = await fetch(buildFileApiPath(filename), {
             method: 'PUT',
@@ -206,10 +264,43 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
           }
         }
         await mutateFiles();
-        onFileSelect?.(filename);
       }
 
-      setSaveSuccess(`Merged output saved to ${filename}.`);
+      const processedSources = new Set<string>();
+      const cleanupPlans = [
+        { sourceName: selectedA, action: postMergeActionA },
+        { sourceName: selectedB, action: postMergeActionB },
+      ];
+
+      for (const cleanupPlan of cleanupPlans) {
+        const sourceName = cleanupPlan.sourceName?.trim();
+        if (!sourceName || sourceName === savedFilename || processedSources.has(sourceName)) continue;
+        if (cleanupPlan.action === 'keep') continue;
+        processedSources.add(sourceName);
+
+        if (cleanupPlan.action === 'delete') {
+          await deleteFile(sourceName);
+          cleanupSummary.push(`deleted ${sourceName}`);
+          continue;
+        }
+
+        const archiveBasePath = buildArchivePath(sourceName);
+        const archiveTarget = findAvailableVersionedFilename(archiveBasePath, fileNames);
+        await renameFile(sourceName, archiveTarget);
+        fileNames.push(archiveTarget);
+        cleanupSummary.push(`archived ${sourceName} to ${archiveTarget}`);
+      }
+
+      onFileSelect?.(savedFilename);
+      setSelectedA(savedFilename);
+      setRevisionA('latest');
+      setSelectedB(null);
+      setRevisionB('latest');
+      setSaveSuccess(
+        cleanupSummary.length > 0
+          ? `Merged output saved to ${savedFilename}; ${cleanupSummary.join('; ')}.`
+          : `Merged output saved to ${savedFilename}.`,
+      );
       setMergedDirty(false);
       onDirtyChange?.(false);
     } catch (error) {
@@ -222,7 +313,7 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
   }
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
+    <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
       <div className="flex flex-col gap-2 px-3 py-2 bg-gray-900 border-b border-gray-700 shrink-0">
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold text-gray-400 shrink-0">A</span>
@@ -338,6 +429,40 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
           </select>
         </div>
 
+        <div className="grid gap-2 sm:grid-cols-2">
+          <label className="flex items-center gap-2 text-xs text-gray-300">
+            <span className="min-w-16 text-gray-400">After A</span>
+            <select
+              className={selectClass}
+              value={sourceAWillBeReplaced ? 'keep' : postMergeActionA}
+              onChange={(e) => setPostMergeActionA(e.target.value as PostMergeAction)}
+              disabled={sourceAWillBeReplaced || !selectedA}
+            >
+              <option value="keep">Keep file A</option>
+              <option value="archive">Archive file A</option>
+              <option value="delete">Delete file A</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-2 text-xs text-gray-300">
+            <span className="min-w-16 text-gray-400">After B</span>
+            <select
+              className={selectClass}
+              value={sourceBWillBeReplaced ? 'keep' : postMergeActionB}
+              onChange={(e) => setPostMergeActionB(e.target.value as PostMergeAction)}
+              disabled={sourceBWillBeReplaced || !selectedB}
+            >
+              <option value="keep">Keep file B</option>
+              <option value="archive">Archive file B</option>
+              <option value="delete">Delete file B</option>
+            </select>
+          </label>
+        </div>
+        {(sourceAWillBeReplaced || sourceBWillBeReplaced) && (
+          <p className="text-xs text-gray-500">
+            The merge target always stays in place, so overwrite targets cannot be archived or deleted in the same step.
+          </p>
+        )}
+
         {(saveSuccess || saveError) && (
           <div className={`text-xs ${saveError ? 'text-red-400' : 'text-green-400'}`}>
             {saveError ?? saveSuccess}
@@ -380,8 +505,10 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
             contentB={effectiveContentB}
             filenameA={headerA}
             filenameB={headerB}
+            activeHunkId={activeHunkId}
             mergeStateByHunk={mergeStateByHunk}
             editedContentByHunk={editedContentByHunk}
+            onActiveHunkChange={setActiveHunkId}
             onTakeA={(hunkId) => {
               setMergeStateByHunk((prev) => ({ ...prev, [hunkId]: 'takeA' }));
             }}
@@ -412,15 +539,65 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
           <div className="shrink-0 border-t border-gray-700 bg-gray-900 p-3">
             <div className="mb-1 flex items-center justify-between text-xs">
               <span className="font-semibold text-gray-300">Merged Output Preview</span>
-              <span className={canFinalizeMerge ? 'text-green-400' : 'text-yellow-400'}>
-                {canFinalizeMerge ? 'Ready to finalize' : `${unresolvedCount} unresolved hunk(s)`}
-              </span>
+              <div className="flex items-center gap-2">
+                <div className="flex items-center rounded border border-gray-700 bg-gray-950 p-0.5">
+                  {([
+                    ['raw', 'MD Raw'],
+                    ['rich', 'Rich Text'],
+                  ] as const).map(([view, label]) => (
+                    <button
+                      key={view}
+                      type="button"
+                      onClick={() => setMergedOutputView(view)}
+                      className={`rounded px-2 py-1 transition-colors ${
+                        mergedOutputView === view
+                          ? 'bg-blue-600 text-white'
+                          : 'text-gray-300 hover:bg-gray-800'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <span className={canFinalizeMerge ? 'text-green-400' : 'text-yellow-400'}>
+                  {canFinalizeMerge ? 'Ready to finalize' : `${unresolvedCount} unresolved hunk(s)`}
+                </span>
+              </div>
             </div>
-            <textarea
-              className="h-36 w-full resize-y rounded border border-gray-700 bg-gray-950 px-2 py-1 font-mono text-xs text-gray-200 focus:border-blue-500 focus:outline-none"
-              readOnly
-              value={mergedOutput}
-            />
+            <div className="h-72 overflow-hidden rounded border border-gray-700 bg-gray-950">
+              {mergedOutputView === 'raw' ? (
+                <div ref={mergedPreviewRef} className="h-full overflow-y-auto font-mono text-xs text-gray-200">
+                  {mergedOutputLines.map((line, index) => {
+                    const activeRange = activeHunkId !== null ? mergedPreviewRanges[activeHunkId] : undefined;
+                    const isActive =
+                      activeRange !== undefined &&
+                      index >= activeRange.startLine &&
+                      index <= activeRange.endLine;
+
+                    return (
+                      <div
+                        key={`${index}-${line}`}
+                        data-merged-preview-hunk={isActive ? activeHunkId : undefined}
+                        className={`flex min-w-0 border-b border-gray-900/60 ${
+                          isActive ? 'bg-blue-950/70' : ''
+                        }`}
+                      >
+                        <span className="w-12 shrink-0 select-none border-r border-gray-800 px-2 py-1 text-right text-gray-500">
+                          {index + 1}
+                        </span>
+                        <span className="min-w-0 flex-1 whitespace-pre-wrap break-all px-3 py-1">
+                          {line || '\u00a0'}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="flex h-full flex-col">
+                  <PreviewPane content={mergedOutput} />
+                </div>
+              )}
+            </div>
           </div>
         </>
       )}

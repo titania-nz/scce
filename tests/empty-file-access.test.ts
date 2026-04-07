@@ -197,9 +197,9 @@ test('existing files can have their category updated more than once', async () =
   assert.equal(firstUpdateResponse.status, 200);
 
   const firstUpdatePayload = (await firstUpdateResponse.json()) as {
-    category?: { document?: string; chapter?: string } | null;
+    category?: { document?: string; chapter?: string; isPrimary?: boolean } | null;
   };
-  assert.deepEqual(firstUpdatePayload.category, firstCategory);
+  assert.deepEqual(firstUpdatePayload.category, { ...firstCategory, isPrimary: false });
 
   const secondCategory = {
     document: 'Ch 2 Revised Rules',
@@ -218,9 +218,58 @@ test('existing files can have their category updated more than once', async () =
   assert.equal(listResponse.status, 200);
 
   const listPayload = (await listResponse.json()) as {
-    files?: Array<{ name: string; category?: { document?: string; chapter?: string } | null }>;
+    files?: Array<{ name: string; category?: { document?: string; chapter?: string; isPrimary?: boolean } | null }>;
   };
   const listedFile = listPayload.files?.find((file) => file.name === name);
   assert.ok(listedFile, 'expected updated file to be returned in the file list');
-  assert.deepEqual(listedFile.category, secondCategory);
+  assert.deepEqual(listedFile.category, { ...secondCategory, isPrimary: false });
+});
+
+test('setting a primary file clears the previous primary in the same story/chapter', async () => {
+  const firstName = 'primary-chapter-a.md';
+  const secondName = 'primary-chapter-b.md';
+  const sharedCategory = {
+    document: 'Story Alpha',
+    chapter: 'Chapter 3',
+  };
+
+  for (const name of [firstName, secondName]) {
+    const createResponse = await fetch(`${BASE_URL}/api/files`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: authCookie },
+      body: JSON.stringify({ name, content: `# ${name}` }),
+    });
+    assert.equal(createResponse.status, 201);
+  }
+
+  const firstPrimaryResponse = await fetch(`${BASE_URL}/api/files/${encodeURIComponent(firstName)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Cookie: authCookie },
+    body: JSON.stringify({ category: { ...sharedCategory, isPrimary: true } }),
+  });
+  assert.equal(firstPrimaryResponse.status, 200);
+
+  const secondPrimaryResponse = await fetch(`${BASE_URL}/api/files/${encodeURIComponent(secondName)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Cookie: authCookie },
+    body: JSON.stringify({ category: { ...sharedCategory, isPrimary: true } }),
+  });
+  assert.equal(secondPrimaryResponse.status, 200);
+
+  const listResponse = await fetch(`${BASE_URL}/api/files`, {
+    headers: { Cookie: authCookie },
+  });
+  assert.equal(listResponse.status, 200);
+
+  const listPayload = (await listResponse.json()) as {
+    files?: Array<{
+      name: string;
+      category?: { document?: string; chapter?: string; isPrimary?: boolean } | null;
+    }>;
+  };
+  const firstFile = listPayload.files?.find((file) => file.name === firstName);
+  const secondFile = listPayload.files?.find((file) => file.name === secondName);
+
+  assert.equal(firstFile?.category?.isPrimary, false);
+  assert.equal(secondFile?.category?.isPrimary, true);
 });

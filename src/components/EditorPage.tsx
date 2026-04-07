@@ -163,6 +163,7 @@ function eventToShortcut(event: KeyboardEvent): string {
 
 const LOCAL_DRAFT_KEY = 'scce:working-drafts:v1';
 const LOCAL_QUEUE_KEY = 'scce:checkpoint-queue:v1';
+const DESKTOP_SIDEBAR_OPEN_KEY = 'scce:desktop-sidebar-open:v1';
 const MISSING_FILE_PROBE_ATTEMPTS = 4;
 const MISSING_FILE_PROBE_DELAY_MS = 250;
 
@@ -202,6 +203,8 @@ export default function EditorPage() {
   const [isDirty, setIsDirty] = useState(false);
   const [mobileView, setMobileView] = useState<'edit' | 'preview'>('edit');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [desktopSidebarOpen, setDesktopSidebarOpen] = useState(true);
+  const [isDesktopViewport, setIsDesktopViewport] = useState(false);
   const [workspaceMode, setWorkspaceMode] = useState<'editor' | 'compare' | 'documents'>('editor');
   const [inspectorTab, setInspectorTab] = useState<'checkpoint' | 'timeline' | 'publish' | 'links'>('checkpoint');
   const [utilitiesOpen, setUtilitiesOpen] = useState(false);
@@ -277,6 +280,7 @@ export default function EditorPage() {
     () => REVISION_STATUSES.map((value) => ({ value, label: value })),
     [],
   );
+  const isSidebarVisible = isDesktopViewport ? desktopSidebarOpen : sidebarOpen;
   const missingRequiredFields = useMemo(() => {
     const missing: string[] = [];
     if (requiredFields.note && revisionNote.trim().length === 0) missing.push('Note');
@@ -369,6 +373,27 @@ export default function EditorPage() {
   useEffect(() => {
     window.localStorage.setItem(SHORTCUT_STORAGE_KEY, JSON.stringify(shortcuts));
   }, [shortcuts]);
+
+  useEffect(() => {
+    setDesktopSidebarOpen(readLocalJson<boolean>(DESKTOP_SIDEBAR_OPEN_KEY, true));
+  }, []);
+
+  useEffect(() => {
+    writeLocalJson(DESKTOP_SIDEBAR_OPEN_KEY, desktopSidebarOpen);
+  }, [desktopSidebarOpen]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const mediaQuery = window.matchMedia('(min-width: 768px)');
+    const syncViewport = (event?: MediaQueryList | MediaQueryListEvent) => {
+      setIsDesktopViewport(event?.matches ?? mediaQuery.matches);
+    };
+
+    syncViewport(mediaQuery);
+    mediaQuery.addEventListener('change', syncViewport);
+    return () => mediaQuery.removeEventListener('change', syncViewport);
+  }, []);
 
   useEffect(() => {
     if (!commandPaletteOpen) return;
@@ -1025,7 +1050,17 @@ export default function EditorPage() {
       await saveWorkingCopy(content);
     }
     setSelectedFile(filename);
-    setSidebarOpen(false);
+    if (!isDesktopViewport) {
+      setSidebarOpen(false);
+    }
+  }
+
+  function handleSidebarToggle() {
+    if (isDesktopViewport) {
+      setDesktopSidebarOpen((open) => !open);
+      return;
+    }
+    setSidebarOpen((open) => !open);
   }
 
   function handleFileDeleted(filename: string) {
@@ -1237,20 +1272,28 @@ export default function EditorPage() {
 
       <div
         className={`
-          fixed md:static inset-y-0 left-0 z-20
-          transform transition-transform duration-200 ease-in-out
-          ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
-          md:translate-x-0
+          fixed inset-y-0 left-0 z-20 overflow-hidden
+          transition-[width] duration-200 ease-in-out
+          md:static md:shrink-0
+          ${desktopSidebarOpen ? 'md:w-80' : 'md:w-0'}
         `}
       >
-        <Sidebar
-          selectedFile={selectedFile}
-          onFileSelect={handleFileSelect}
-          onFileDeleted={handleFileDeleted}
-          onFileRenamed={handleFileRenamed}
-          onJumpToHeading={(heading) => setJumpToHeadingToken(`${Date.now()}::${heading}`)}
-          applyFilter={setFileFilter}
-        />
+        <div
+          className={`
+            h-full w-80 transform transition-transform duration-200 ease-in-out
+            ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
+            ${desktopSidebarOpen ? 'md:translate-x-0' : 'md:-translate-x-full'}
+          `}
+        >
+          <Sidebar
+            selectedFile={selectedFile}
+            onFileSelect={handleFileSelect}
+            onFileDeleted={handleFileDeleted}
+            onFileRenamed={handleFileRenamed}
+            onJumpToHeading={(heading) => setJumpToHeadingToken(`${Date.now()}::${heading}`)}
+            applyFilter={setFileFilter}
+          />
+        </div>
       </div>
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
@@ -1259,6 +1302,7 @@ export default function EditorPage() {
           isDirty={isDirty}
           isSaving={isSaving}
           lastCheckpointAt={lastCheckpointAt}
+          isSidebarOpen={isSidebarVisible}
           isOffline={isOffline}
           queuedSyncCount={queuedCheckpoints.length}
           mobileView={mobileView}
@@ -1286,7 +1330,7 @@ export default function EditorPage() {
             setUtilitiesOpen(false);
             void handleExportBackup();
           }}
-          onToggleSidebar={() => setSidebarOpen((o) => !o)}
+          onToggleSidebar={handleSidebarToggle}
           onWorkspaceModeChange={setWorkspaceMode}
           isUtilitiesOpen={utilitiesOpen}
           onToggleUtilities={() => setUtilitiesOpen((open) => !open)}
