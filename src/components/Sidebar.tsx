@@ -457,6 +457,9 @@ export default function Sidebar({
   const [newFileName, setNewFileName] = useState('');
   const [showNewInput, setShowNewInput] = useState(false);
   const [newFileParentPath, setNewFileParentPath] = useState<string | null>(null);
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [uploadPopoverOpen, setUploadPopoverOpen] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [clipboardContent, setClipboardContent] = useState<string | null>(null);
   const [renamingFile, setRenamingFile] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -883,6 +886,8 @@ export default function Sidebar({
     setNewFileName('');
     setNewFileParentPath(null);
     setClipboardContent(null);
+    setAddMenuOpen(false);
+    setUploadPopoverOpen(false);
   }
 
   async function handleCreate() {
@@ -911,6 +916,8 @@ export default function Sidebar({
       const today = new Date().toISOString().slice(0, 10);
       setNewFileName(`paste-${today}`);
       setShowNewInput(true);
+      setAddMenuOpen(false);
+      setUploadPopoverOpen(false);
       setError(null);
     } catch {
       setError('Could not read clipboard. Check browser permissions.');
@@ -1040,6 +1047,8 @@ export default function Sidebar({
     setShowNewInput(false);
     setCreatingFolderParent(parentPath ?? ROOT_FOLDER_SENTINEL);
     setNewFolderValue('');
+    setAddMenuOpen(false);
+    setUploadPopoverOpen(false);
     setRenamingFolder(null);
     setRenamingFile(null);
     setCategorizingFile(null);
@@ -1181,6 +1190,8 @@ export default function Sidebar({
     setNewFileParentPath(parentPath);
     setNewFileName(parentPath ? 'untitled.md' : '');
     setClipboardContent(null);
+    setAddMenuOpen(false);
+    setUploadPopoverOpen(false);
     setError(null);
     setCreatingFolderParent(null);
   }
@@ -1509,27 +1520,77 @@ export default function Sidebar({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
             </svg>
           </button>
-          <button
-            onClick={handlePasteFromClipboard}
-            className="text-gray-400 hover:text-white transition-colors"
-            title="Paste from clipboard"
-            aria-label="Paste from clipboard"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-            </svg>
-          </button>
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="text-gray-400 hover:text-white disabled:text-gray-600 disabled:cursor-not-allowed transition-colors"
-            title={selectedFile ? 'Clear the current selection to import files' : 'Import markdown files'}
-            aria-label="Import files"
-            disabled={Boolean(selectedFile)}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-            </svg>
-          </button>
+          <div className="relative">
+            <button
+              onClick={() => {
+                setAddMenuOpen((open) => !open);
+                setUploadPopoverOpen(false);
+              }}
+              className="rounded bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-500 transition-colors"
+              aria-haspopup="menu"
+              aria-expanded={addMenuOpen}
+            >
+              Add
+            </button>
+            {addMenuOpen && (
+              <div className="absolute right-0 top-9 z-30 w-52 rounded border border-gray-700 bg-gray-900 p-1 shadow-xl">
+                <button
+                  onClick={() => openNewFileInput(null)}
+                  className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800"
+                >
+                  New file
+                </button>
+                <button
+                  onClick={() => startFolderCreate(null)}
+                  className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800"
+                >
+                  New folder
+                </button>
+                <button
+                  onClick={() => void handlePasteFromClipboard()}
+                  className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800"
+                >
+                  Paste from clipboard
+                </button>
+                <div className="my-1 border-t border-gray-800" />
+                <button
+                  onClick={() => setUploadPopoverOpen((open) => !open)}
+                  className="flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800"
+                  disabled={Boolean(selectedFile)}
+                >
+                  <span>Upload or import</span>
+                  <span className="text-[10px] text-gray-500">{uploadPopoverOpen ? 'Hide' : 'Show'}</span>
+                </button>
+                {uploadPopoverOpen && (
+                  <div className="mt-1 space-y-1 rounded border border-gray-800 bg-gray-950/60 p-1">
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800"
+                    >
+                      Upload markdown files
+                    </button>
+                    <button
+                      onClick={() => zipInputRef.current?.click()}
+                      className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800"
+                    >
+                      Import ZIP
+                    </button>
+                    <button
+                      onClick={() => folderInputRef.current?.click()}
+                      className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800"
+                    >
+                      Import folder
+                    </button>
+                    {selectedFile && (
+                      <p className="px-2 py-1 text-[11px] text-gray-500">
+                        Clear the current selection before importing.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
           <input
             ref={fileInputRef}
             type="file"
@@ -1538,15 +1599,6 @@ export default function Sidebar({
             className="hidden"
             onChange={handleFileUpload}
           />
-          <button
-            onClick={() => zipInputRef.current?.click()}
-            className="text-gray-400 hover:text-white disabled:text-gray-600 disabled:cursor-not-allowed transition-colors"
-            title={selectedFile ? 'Clear the current selection to import ZIP files' : 'Import ZIP'}
-            aria-label="Import ZIP"
-            disabled={Boolean(selectedFile)}
-          >
-            <span className="text-[10px] font-semibold">ZIP</span>
-          </button>
           <input
             ref={zipInputRef}
             type="file"
@@ -1554,15 +1606,6 @@ export default function Sidebar({
             className="hidden"
             onChange={handleZipUpload}
           />
-          <button
-            onClick={() => folderInputRef.current?.click()}
-            className="text-gray-400 hover:text-white disabled:text-gray-600 disabled:cursor-not-allowed transition-colors"
-            title={selectedFile ? 'Clear the current selection to import a folder' : 'Import folder'}
-            aria-label="Import folder"
-            disabled={Boolean(selectedFile)}
-          >
-            <span className="text-[10px] font-semibold">DIR</span>
-          </button>
           <input
             ref={folderInputRef}
             type="file"
@@ -1571,196 +1614,192 @@ export default function Sidebar({
             onChange={handleFolderUpload}
             {...({ webkitdirectory: '' } as React.InputHTMLAttributes<HTMLInputElement>)}
           />
-          <button
-            onClick={() => {
-              setShowNewInput(true);
-              setNewFileParentPath(null);
-              setClipboardContent(null);
-              setError(null);
-              setCreatingFolderParent(null);
-            }}
-            className="text-gray-400 hover:text-white transition-colors"
-            title="New file"
-            aria-label="New file"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-          </button>
-          <button
-            onClick={() => startFolderCreate(null)}
-            className="text-gray-400 hover:text-white transition-colors"
-            title="New folder"
-            aria-label="New folder"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4.5 w-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7a2 2 0 012-2h5l2 2h3m4 0h2m-1-1v2m-6 9h7a2 2 0 002-2V9a2 2 0 00-2-2h-7l-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2h4" />
-            </svg>
-          </button>
         </div>
       </div>
 
-      <div className="px-3 py-2 border-b border-gray-700 space-y-2">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <button
-            type="button"
-            onClick={() => applyFilter({ chapterSearch: '', metaSearch: 'needs review', dateFrom: '', dateTo: '' })}
-            className="text-[11px] px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-100"
-          >
-            My review queue
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              const { from, to } = getCurrentWeekRange();
-              applyFilter({ chapterSearch: '', metaSearch: 'needs review', dateFrom: from, dateTo: to });
-            }}
-            className="text-[11px] px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-100"
-          >
-            Needs review this week
-          </button>
-          <button
-            type="button"
-            onClick={saveCurrentFilter}
-            className="text-[11px] px-2 py-1 rounded bg-blue-700 hover:bg-blue-600 text-white"
-          >
-            Save current filter
-          </button>
-        </div>
+      <div className="border-b border-gray-800 px-3 py-2">
+        <button
+          type="button"
+          onClick={() => setFiltersOpen((open) => !open)}
+          className="flex w-full items-center justify-between rounded bg-gray-800/70 px-3 py-2 text-left text-xs font-medium text-gray-200 hover:bg-gray-800"
+        >
+          <span>Filters</span>
+          <span className="text-gray-500">{filtersOpen ? 'Hide' : 'Show'}</span>
+        </button>
 
-        {savedFilters.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {savedFilters.map((filter) => (
-              <div key={filter.id} className="inline-flex items-center rounded border border-gray-600 overflow-hidden">
+        {filtersOpen && (
+          <div className="mt-2 space-y-3 rounded border border-gray-800 bg-gray-950/40 p-3">
+            <div className="space-y-2">
+              <div className="text-[11px] uppercase tracking-wide text-gray-500">Quick filters</div>
+              <div className="flex flex-wrap items-center gap-1.5">
                 <button
                   type="button"
-                  onClick={() => applyFilter(filter)}
-                  className="text-[11px] px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-100"
+                  onClick={() => applyFilter({ chapterSearch: '', metaSearch: 'needs review', dateFrom: '', dateTo: '' })}
+                  className="text-[11px] px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-100"
                 >
-                  {filter.name}
+                  My review queue
                 </button>
                 <button
                   type="button"
-                  onClick={() => setSavedFilters((prev) => prev.filter((item) => item.id !== filter.id))}
-                  className="text-[11px] px-1.5 py-1 bg-gray-700 hover:bg-red-700 text-gray-300"
-                  aria-label={`Delete saved filter ${filter.name}`}
+                  onClick={() => {
+                    const { from, to } = getCurrentWeekRange();
+                    applyFilter({ chapterSearch: '', metaSearch: 'needs review', dateFrom: from, dateTo: to });
+                  }}
+                  className="text-[11px] px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-100"
                 >
-                  ×
+                  Needs review this week
+                </button>
+                <button
+                  type="button"
+                  onClick={saveCurrentFilter}
+                  className="text-[11px] px-2 py-1 rounded bg-blue-700 hover:bg-blue-600 text-white"
+                >
+                  Save current filter
                 </button>
               </div>
-            ))}
-          </div>
-        )}
+            </div>
 
-        <input
-          type="text"
-          value={globalQuery}
-          onChange={(e) => setGlobalQuery(e.target.value)}
-          placeholder="Search all files + revisions"
-          className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
-        />
-        {globalQuery.trim() && (
-          <div className="grid grid-cols-2 gap-2">
-            <select
-              value={facetDocument}
-              onChange={(e) => setFacetDocument(e.target.value)}
-              className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600"
-              aria-label="Filter by document"
-            >
-              <option value="">All documents</option>
-              {availableDocuments.map((document) => (
-                <option key={document} value={document}>{document}</option>
-              ))}
-            </select>
-            <select
-              value={facetStatus}
-              onChange={(e) => setFacetStatus(e.target.value)}
-              className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600"
-              aria-label="Filter by status"
-            >
-              <option value="">All statuses</option>
-              {availableStatuses.map((statusOption) => (
-                <option key={statusOption} value={statusOption}>{statusOption}</option>
-              ))}
-            </select>
-            <select
-              value={facetTag}
-              onChange={(e) => setFacetTag(e.target.value)}
-              className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600"
-              aria-label="Filter by tag"
-            >
-              <option value="">All tags</option>
-              {availableTags.map((tag) => (
-                <option key={tag} value={tag}>#{tag}</option>
-              ))}
-            </select>
-            <select
-              value={facetDateRange}
-              onChange={(e) => setFacetDateRange(e.target.value as 'all' | '7d' | '30d' | '90d')}
-              className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600"
-              aria-label="Filter by date range"
-            >
-              <option value="all">All dates</option>
-              <option value="7d">Last 7 days</option>
-              <option value="30d">Last 30 days</option>
-              <option value="90d">Last 90 days</option>
-            </select>
-          </div>
-        )}
-        <input
-          type="text"
-          value={chapterSearch}
-          onChange={(e) => setChapterSearch(e.target.value)}
-          placeholder="Filter by chapter name"
-          className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
-        />
-        <div className="grid grid-cols-2 gap-2">
-          <input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-            className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
-            aria-label="Created from date"
-          />
-          <input
-            type="date"
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-            className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
-            aria-label="Created to date"
-          />
-        </div>
-        <input
-          type="text"
-          value={metaSearch}
-          onChange={(e) => setMetaSearch(e.target.value)}
-          placeholder="Filter by note / tag / status"
-          className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
-        />
-        {selectedFile && headingOptions.length > 0 && (
-          <div className="flex gap-2">
-            <select
-              value={selectedHeading}
-              onChange={(e) => setSelectedHeading(e.target.value)}
-              className="flex-1 bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600"
-              aria-label="Jump to heading"
-            >
-              <option value="">Jump to heading…</option>
-              {headingOptions.map((heading) => (
-                <option key={`${heading.level}-${heading.text}`} value={heading.text}>
-                  {'  '.repeat(Math.max(0, heading.level - 1))}
-                  {heading.text}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={handleJumpToHeading}
-              disabled={!selectedHeading}
-              className="text-xs px-2 py-1 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 rounded transition-colors"
-            >
-              Go
-            </button>
+            {savedFilters.length > 0 && (
+              <div className="space-y-2">
+                <div className="text-[11px] uppercase tracking-wide text-gray-500">Saved filters</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {savedFilters.map((filter) => (
+                    <div key={filter.id} className="inline-flex items-center rounded border border-gray-600 overflow-hidden">
+                      <button
+                        type="button"
+                        onClick={() => applyFilter(filter)}
+                        className="text-[11px] px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-100"
+                      >
+                        {filter.name}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSavedFilters((prev) => prev.filter((item) => item.id !== filter.id))}
+                        className="text-[11px] px-1.5 py-1 bg-gray-700 hover:bg-red-700 text-gray-300"
+                        aria-label={`Delete saved filter ${filter.name}`}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <div className="text-[11px] uppercase tracking-wide text-gray-500">Search and advanced filters</div>
+              <input
+                type="text"
+                value={globalQuery}
+                onChange={(e) => setGlobalQuery(e.target.value)}
+                placeholder="Search all files + revisions"
+                className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
+              />
+              {globalQuery.trim() && (
+                <div className="grid grid-cols-2 gap-2">
+                  <select
+                    value={facetDocument}
+                    onChange={(e) => setFacetDocument(e.target.value)}
+                    className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600"
+                    aria-label="Filter by document"
+                  >
+                    <option value="">All documents</option>
+                    {availableDocuments.map((document) => (
+                      <option key={document} value={document}>{document}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={facetStatus}
+                    onChange={(e) => setFacetStatus(e.target.value)}
+                    className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600"
+                    aria-label="Filter by status"
+                  >
+                    <option value="">All statuses</option>
+                    {availableStatuses.map((statusOption) => (
+                      <option key={statusOption} value={statusOption}>{statusOption}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={facetTag}
+                    onChange={(e) => setFacetTag(e.target.value)}
+                    className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600"
+                    aria-label="Filter by tag"
+                  >
+                    <option value="">All tags</option>
+                    {availableTags.map((tag) => (
+                      <option key={tag} value={tag}>#{tag}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={facetDateRange}
+                    onChange={(e) => setFacetDateRange(e.target.value as 'all' | '7d' | '30d' | '90d')}
+                    className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600"
+                    aria-label="Filter by date range"
+                  >
+                    <option value="all">All dates</option>
+                    <option value="7d">Last 7 days</option>
+                    <option value="30d">Last 30 days</option>
+                    <option value="90d">Last 90 days</option>
+                  </select>
+                </div>
+              )}
+              <input
+                type="text"
+                value={chapterSearch}
+                onChange={(e) => setChapterSearch(e.target.value)}
+                placeholder="Filter by chapter name"
+                className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
+              />
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                  className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
+                  aria-label="Created from date"
+                />
+                <input
+                  type="date"
+                  value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
+                  aria-label="Created to date"
+                />
+              </div>
+              <input
+                type="text"
+                value={metaSearch}
+                onChange={(e) => setMetaSearch(e.target.value)}
+                placeholder="Filter by note / tag / status"
+                className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
+              />
+              {selectedFile && headingOptions.length > 0 && (
+                <div className="flex gap-2">
+                  <select
+                    value={selectedHeading}
+                    onChange={(e) => setSelectedHeading(e.target.value)}
+                    className="flex-1 bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600"
+                    aria-label="Jump to heading"
+                  >
+                    <option value="">Jump to heading…</option>
+                    {headingOptions.map((heading) => (
+                      <option key={`${heading.level}-${heading.text}`} value={heading.text}>
+                        {'  '.repeat(Math.max(0, heading.level - 1))}
+                        {heading.text}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={handleJumpToHeading}
+                    disabled={!selectedHeading}
+                    className="text-xs px-2 py-1 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 rounded transition-colors"
+                  >
+                    Go
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>
