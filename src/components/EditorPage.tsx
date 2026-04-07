@@ -240,9 +240,13 @@ export default function EditorPage() {
   const [publishMessage, setPublishMessage] = useState<string>('');
   const [jumpToHeadingToken, setJumpToHeadingToken] = useState<string>('');
   const [fileFilter, setFileFilter] = useState({ chapterSearch: '', metaSearch: '', dateFrom: '', dateTo: '' });
+  const selectedFileExists = selectedFile
+    ? files.some((file) => file.name === selectedFile)
+    : false;
   const hasLocalOnlyDraft = selectedFile
     ? typeof workingDraftByFile[selectedFile] === 'string' || typeof recoverableDrafts[selectedFile] === 'string'
     : false;
+  const shouldSkipSelectedFileFetch = Boolean(selectedFile && hasLocalOnlyDraft && !selectedFileExists);
 
   const {
     content: loadedContent,
@@ -251,7 +255,7 @@ export default function EditorPage() {
     error: fileLoadError,
     saveContent,
     updateRevisionInlineNotes,
-  } = useFileContent(selectedFile, null, hasLocalOnlyDraft);
+  } = useFileContent(selectedFile, null, hasLocalOnlyDraft, shouldSkipSelectedFileFetch);
   const {
     documents,
     isLoading: isDocumentsLoading,
@@ -489,6 +493,13 @@ export default function EditorPage() {
         setLatestRevisionStatus('');
         return;
       }
+      if (!selectedFileExists) {
+        setPublishProfiles([]);
+        setPublishHistory([]);
+        setPublishMessage('');
+        setLatestRevisionStatus('');
+        return;
+      }
       try {
         const res = await fetch(buildFilePublishApiPath(selectedFile));
         const payload = await res.json() as {
@@ -509,7 +520,7 @@ export default function EditorPage() {
     }
 
     loadPublishMetadata();
-  }, [latestRevision?.id, selectedFile]);
+  }, [latestRevision?.id, selectedFile, selectedFileExists]);
 
   useEffect(() => {
     if (!selectedFile || !fileLoadError) return;
@@ -1025,6 +1036,10 @@ export default function EditorPage() {
       setPublishMessage('Select a file before publishing.');
       return;
     }
+    if (!selectedFileExists) {
+      setPublishMessage('Save this recovered draft as a file before publishing.');
+      return;
+    }
 
     setIsPublishing(true);
     setPublishMessage('');
@@ -1051,7 +1066,7 @@ export default function EditorPage() {
     } finally {
       setIsPublishing(false);
     }
-  }, [latestRevisionStatus, publishProfileId, selectedFile]);
+  }, [latestRevisionStatus, publishProfileId, selectedFile, selectedFileExists]);
 
   const normalizedQuery = commandQuery.trim().toLowerCase();
   const openPrefix = normalizedQuery.startsWith('open ');

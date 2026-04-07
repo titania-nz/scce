@@ -41,8 +41,13 @@ interface SaveContentOptions {
 }
 
 // Keep all "open file" data loading and save actions in one reusable hook.
-export function useFileContent(filename: string | null, revisionId?: string | null, allowMissing = false) {
-  const key = filename
+export function useFileContent(
+  filename: string | null,
+  revisionId?: string | null,
+  allowMissing = false,
+  skipFetch = false,
+) {
+  const key = filename && !skipFetch
     ? `${buildFileApiPath(filename)}${revisionId ? `?revisionId=${encodeURIComponent(revisionId)}` : ''}`
     : null;
   const { data, error, isLoading, mutate } = useSWR<FileContentResponse>(
