@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { deleteNoteFile, readNoteFile, renameNoteFile, writeNoteFile } from '@/lib/noteContentStorage';
+import { deleteFileCategory, readFileCategory, renameFileCategory, writeFileCategory } from '@/lib/fileCategoryStorage';
 import { deleteRevisions, readRevisions, renameRevisions, writeRevisions } from '@/lib/revisionStorage';
 import { deletePublishHistory, renamePublishHistory } from '@/lib/publishStorage';
 import { parseFilename } from '@/lib/parseFilename';
-import { Revision } from '@/types';
+import { FileCategory, Revision } from '@/types';
 
 type Params = { params: Promise<{ filename: string[] }> };
 
@@ -33,6 +34,31 @@ function parseTags(input: unknown): string[] {
     .filter(Boolean);
 }
 
+// Helper function: keeps a small, testable transformation isolated from UI side effects.
+function parseCategory(input: unknown): FileCategory | null {
+  if (input === undefined) {
+    throw Object.assign(new Error('Missing category'), { status: 400 });
+  }
+  if (input === null) return null;
+  if (typeof input !== 'object') {
+    throw Object.assign(new Error('Invalid category'), { status: 400 });
+  }
+
+  const category = input as Partial<FileCategory>;
+  const document = typeof category.document === 'string' ? category.document.trim() : '';
+  const chapter = typeof category.chapter === 'string' ? category.chapter.trim() : '';
+
+  if (!document && !chapter) return null;
+  if ((document || chapter) && (document.length > 120 || chapter.length > 120)) {
+    throw Object.assign(new Error('Category fields are too long'), { status: 400 });
+  }
+
+  return {
+    document: document || 'Ungrouped',
+    chapter: chapter || 'General',
+  };
+}
+
 // API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function GET(_request: NextRequest, { params }: Params) {
   const { filename: rawFilename } = await params;
@@ -44,6 +70,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
     const selectedRevision = revisionId
       ? revisions.find((revision) => revision.id === revisionId)
       : null;
+    const category = await readFileCategory(filename);
 
     if (revisionId && !selectedRevision) {
       return NextResponse.json({ error: 'Revision not found' }, { status: 404 });
@@ -54,6 +81,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
       content: selectedRevision?.content ?? content,
       revisions,
       revisionId: selectedRevision?.id ?? null,
+      category,
     });
   } catch (err: unknown) {
     const e = err as { status?: number; message?: string };
@@ -81,7 +109,12 @@ export async function PUT(request: NextRequest, { params }: Params) {
       await renameNoteFile(filename, newName);
       await renameRevisions(filename, newName);
       await renamePublishHistory(filename, newName);
+      await renameFileCategory(filename, newName);
       return NextResponse.json({ name: newName });
+    } else if ('category' in body) {
+      const category = parseCategory(body.category);
+      const updatedCategory = await writeFileCategory(filename, category);
+      return NextResponse.json({ name: filename, category: updatedCategory });
     } else if ('content' in body) {
       const { content } = body;
       if (typeof content !== 'string') {
@@ -148,6 +181,7 @@ export async function DELETE(_request: NextRequest, { params }: Params) {
     await deleteNoteFile(filename);
     await deleteRevisions(filename);
     await deletePublishHistory(filename);
+    await deleteFileCategory(filename);
     return NextResponse.json({ success: true });
   } catch (err: unknown) {
     const e = err as { status?: number; message?: string };

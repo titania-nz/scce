@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFiles } from '@/hooks/useFiles';
-import type { FileContentResponse, FileEntry } from '@/types';
+import type { FileCategory, FileContentResponse, FileEntry } from '@/types';
 import { buildFileApiPath } from '@/lib/fileApiPath';
 import {
   DEFAULT_REVISION_META,
@@ -20,12 +20,6 @@ interface SidebarProps {
 }
 
 type RevisionMeta = RevisionMetaSummary;
-
-interface FileEntryWithMeta extends FileEntry {
-  tags?: string[];
-  note?: string;
-  status?: string;
-}
 
 interface RevisionItem {
   file: FileEntry;
@@ -306,6 +300,18 @@ function parseFileStructure(fileName: string) {
   };
 }
 
+// Merge saved category overrides with filename-derived revision metadata.
+function getResolvedFileStructure(file: FileEntry) {
+  const inferred = parseFileStructure(file.name);
+  if (!file.category) return inferred;
+
+  return {
+    ...inferred,
+    document: file.category.document,
+    chapter: file.category.chapter,
+  };
+}
+
 // Helper function: keeps a small, testable transformation isolated from UI side effects.
 function parseHeadings(content: string): HeadingItem[] {
   return content
@@ -368,12 +374,15 @@ export default function Sidebar({
   onJumpToHeading,
   applyFilter: applyExternalFilter,
 }: SidebarProps) {
-  const { files, isLoading, createFile, deleteFile, deleteFiles, renameFile } = useFiles();
+  const { files, isLoading, createFile, deleteFile, deleteFiles, renameFile, updateFileCategory } = useFiles();
   const [newFileName, setNewFileName] = useState('');
   const [showNewInput, setShowNewInput] = useState(false);
   const [clipboardContent, setClipboardContent] = useState<string | null>(null);
   const [renamingFile, setRenamingFile] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [categorizingFile, setCategorizingFile] = useState<string | null>(null);
+  const [categoryDocumentValue, setCategoryDocumentValue] = useState('');
+  const [categoryChapterValue, setCategoryChapterValue] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [chapterSearch, setChapterSearch] = useState('');
   const [metaSearch, setMetaSearch] = useState('');
@@ -466,7 +475,7 @@ export default function Sidebar({
             const res = await fetch(buildFileApiPath(file.name));
             if (!res.ok) return;
             const payload = (await res.json()) as FileContentResponse;
-            const structure = parseFileStructure(file.name);
+            const structure = getResolvedFileStructure(file);
             const currentMeta = parseMetaFromContent(payload.content ?? '');
             nextMeta[file.name] = currentMeta;
             nextHeadingsByFile[file.name] = parseHeadings(payload.content ?? '');
@@ -603,7 +612,7 @@ export default function Sidebar({
 
   const grouped = useMemo<DocumentGroup[]>(() => {
     const items: RevisionItem[] = files.map((file) => {
-      const structure = parseFileStructure(file.name);
+      const structure = getResolvedFileStructure(file);
       const createdAtSource = file.ctime ?? file.mtime;
       const createdAt = new Date(createdAtSource);
       return {
@@ -958,6 +967,15 @@ export default function Sidebar({
   function startRename(file: FileEntry) {
     setRenamingFile(file.name);
     setRenameValue(file.name.replace(/\.md$/, ''));
+    setCategorizingFile(null);
+  }
+
+  function startCategoryEdit(file: FileEntry) {
+    const category = getResolvedFileStructure(file);
+    setCategorizingFile(file.name);
+    setCategoryDocumentValue(file.category?.document ?? category.document);
+    setCategoryChapterValue(file.category?.chapter ?? category.chapter);
+    setRenamingFile(null);
   }
 
   async function handleRename(oldName: string) {
@@ -983,6 +1001,28 @@ export default function Sidebar({
       setError(e.message ?? 'Could not rename file');
     } finally {
       renamingInFlightRef.current = false;
+    }
+  }
+
+  async function handleSaveCategory(filename: string) {
+    const document = categoryDocumentValue.trim();
+    const chapter = categoryChapterValue.trim();
+
+    setError(null);
+    try {
+      await updateFileCategory(
+        filename,
+        !document && !chapter
+          ? null
+          : {
+              document: document || 'Ungrouped',
+              chapter: chapter || 'General',
+            },
+      );
+      setCategorizingFile(null);
+    } catch (err: unknown) {
+      const e = err as { message?: string };
+      setError(e.message ?? 'Could not update file category');
     }
   }
 
@@ -1461,6 +1501,70 @@ export default function Sidebar({
                                   className="w-full bg-gray-700 text-gray-100 text-sm px-1 py-0.5 rounded border border-gray-500 focus:outline-none focus:border-blue-500"
                                   autoFocus
                                 />
+                              ) : categorizingFile === revision.file.name ? (
+                                <div className="space-y-2">
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <input
+                                      type="text"
+                                      value={categoryDocumentValue}
+                                      onChange={(e) => setCategoryDocumentValue(e.target.value)}
+                                      placeholder="Document"
+                                      className="w-full bg-gray-700 text-gray-100 text-xs px-2 py-1 rounded border border-gray-500 focus:outline-none focus:border-blue-500"
+                                      autoFocus
+                                    />
+                                    <input
+                                      type="text"
+                                      value={categoryChapterValue}
+                                      onChange={(e) => setCategoryChapterValue(e.target.value)}
+                                      placeholder="Chapter"
+                                      className="w-full bg-gray-700 text-gray-100 text-xs px-2 py-1 rounded border border-gray-500 focus:outline-none focus:border-blue-500"
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') void handleSaveCategory(revision.file.name);
+                                        if (e.key === 'Escape') setCategorizingFile(null);
+                                      }}
+                                    />
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        void handleSaveCategory(revision.file.name);
+                                      }}
+                                      className="text-xs px-2 py-1 bg-blue-600 hover:bg-blue-500 rounded transition-colors"
+                                    >
+                                      Save category
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        void updateFileCategory(revision.file.name, null)
+                                          .then(() => setCategorizingFile(null))
+                                          .catch((err: unknown) => {
+                                            const saveError = err as { message?: string };
+                                            setError(saveError.message ?? 'Could not update file category');
+                                          });
+                                      }}
+                                      className="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded transition-colors"
+                                    >
+                                      Clear
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        setCategorizingFile(null);
+                                      }}
+                                      className="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded transition-colors"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
                               ) : (
                                 <>
                                   <div className="flex items-center gap-2">
@@ -1487,6 +1591,21 @@ export default function Sidebar({
                                     )}
                                     {!selectionMode && (
                                       <div className="ml-auto flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            startCategoryEdit(revision.file);
+                                          }}
+                                          className="text-gray-400 hover:text-white p-0.5"
+                                          title={revision.file.category ? 'Re-categorise' : 'Categorise'}
+                                          aria-label={`${revision.file.category ? 'Re-categorise' : 'Categorise'} ${revision.file.name}`}
+                                        >
+                                          <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7a2 2 0 012-2h5l2 2h7a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+                                          </svg>
+                                        </button>
                                         <button
                                           type="button"
                                           onClick={(e) => {
@@ -1522,6 +1641,14 @@ export default function Sidebar({
                                   </div>
 
                                   <div className="mt-1 text-[11px] text-gray-400 space-y-0.5">
+                                    <div className="truncate">
+                                      {revision.document} / {revision.chapter}
+                                      {revision.file.category && (
+                                        <span className="ml-2 rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] text-blue-200">
+                                          Categorised
+                                        </span>
+                                      )}
+                                    </div>
                                     <div className="flex gap-2">
                                       <span>Created: {formatDate(revision.file.ctime ?? revision.file.mtime)}</span>
                                     </div>

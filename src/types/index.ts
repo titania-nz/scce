@@ -3,10 +3,16 @@ export interface FileEntry {
   mtime: string;
   ctime?: string;
   size: number;
+  category?: FileCategory | null;
 }
 
 export interface FileListResponse {
   files: FileEntry[];
+}
+
+export interface FileCategory {
+  document: string;
+  chapter: string;
 }
 
 export type RevisionStatus = string;
@@ -35,6 +41,7 @@ export interface FileContentResponse {
   revisions: Revision[];
   revisionId?: string | null;
   currentDraftRevisionId?: string | null;
+  category?: FileCategory | null;
 }
 
 export interface SaveFileRequest {

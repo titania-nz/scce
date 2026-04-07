@@ -1,9 +1,8 @@
 'use client';
 
 import useSWR from 'swr';
-import { FileEntry, FileListResponse } from '@/types';
+import { FileCategory, FileEntry, FileListResponse } from '@/types';
 import { buildFileApiPath } from '@/lib/fileApiPath';
-import { fetchJson } from '@/lib/fetchJson';
 
 // Load the sidebar file list from the API.
 const fetcher = (url: string) =>
@@ -70,6 +69,22 @@ export function useFiles() {
     await mutate();
   }
 
+  // Save or clear a file's explicit document/chapter category.
+  async function updateFileCategory(filename: string, category: FileCategory | null): Promise<FileCategory | null> {
+    const res = await fetch(buildFileApiPath(filename), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ category }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error ?? 'Could not update file category');
+    }
+    const updated = (await res.json()) as { category?: FileCategory | null };
+    await mutate();
+    return updated.category ?? null;
+  }
+
   return {
     files: data?.files ?? [],
     isLoading,
@@ -78,6 +93,7 @@ export function useFiles() {
     deleteFile,
     deleteFiles,
     renameFile,
+    updateFileCategory,
     mutate,
   };
 }

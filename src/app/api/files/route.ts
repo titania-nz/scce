@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { listNoteFiles } from '@/lib/noteIndexStorage';
 import { noteFileExists, readNoteFile, writeNoteFile } from '@/lib/noteContentStorage';
+import { readFileCategory } from '@/lib/fileCategoryStorage';
 import { readRevisions } from '@/lib/revisionStorage';
 import { parseMetaFromContent, summarizeRevisionMeta } from '@/lib/revisionMeta';
 
@@ -9,23 +10,26 @@ export async function GET(request: NextRequest) {
   try {
     const files = await listNoteFiles();
     const includeMeta = request.nextUrl.searchParams.get('includeMeta');
-    if (includeMeta !== '1' && includeMeta !== 'true') {
-      return NextResponse.json({ files });
-    }
+    const shouldIncludeMeta = includeMeta === '1' || includeMeta === 'true';
 
     const filesWithMeta = await Promise.all(
       files.map(async (file) => {
+        const category = await readFileCategory(file.name);
+        if (!shouldIncludeMeta) {
+          return { ...file, category };
+        }
+
         try {
           const revisions = await readRevisions(file.name);
           const revisionMeta = summarizeRevisionMeta(revisions);
           if (revisionMeta.note || revisionMeta.status || revisionMeta.tags.length > 0) {
-            return { ...file, ...revisionMeta };
+            return { ...file, category, ...revisionMeta };
           }
 
           const content = await readNoteFile(file.name);
-          return { ...file, ...parseMetaFromContent(content) };
+          return { ...file, category, ...parseMetaFromContent(content) };
         } catch {
-          return { ...file, note: '', status: '', tags: [] };
+          return { ...file, category, note: '', status: '', tags: [] };
         }
       }),
     );
