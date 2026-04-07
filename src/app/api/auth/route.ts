@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { COOKIE_NAME, COOKIE_OPTIONS } from './cookie';
-import { createAuthToken, getAuthThrottleStatus, recordAuthFailure } from '@/lib/authThrottle';
+import { getAuthThrottleStatus, recordAuthFailure } from '@/lib/authThrottle';
+import { createAuthToken } from '@/lib/authToken';
 
 // API handler: validates input, calls storage helpers, and returns an HTTP JSON response.
 export async function POST(request: NextRequest) {

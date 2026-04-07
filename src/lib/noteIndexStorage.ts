@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { FileEntry } from '@/types';
+import { isMissingBlobValue } from '@/lib/blobValue';
 import { getBlobStore, isNetlifyRuntime } from '@/lib/netlifyRuntime';
 import { getNotesDir } from '@/lib/notesPath';
 
@@ -34,7 +35,7 @@ async function readBlobFileMeta(filename: string): Promise<BlobFileMetaRecord | 
 
   try {
     const buffer = await store.get(getBlobFileMetaKey(filename));
-    if (!buffer) return null;
+    if (isMissingBlobValue(buffer)) return null;
     const parsed = JSON.parse(new TextDecoder().decode(buffer)) as Partial<BlobFileMetaRecord>;
     if (!parsed.updatedAt && !parsed.createdAt) return null;
     return {
@@ -68,7 +69,7 @@ export async function listNoteFiles(): Promise<FileEntry[]> {
           // Verify the note still exists so the UI does not surface ghost files
           // that would immediately 404 when opened.
           const content = await store.get(blob.key).catch(() => null);
-          if (!content) {
+          if (isMissingBlobValue(content)) {
             return null;
           }
 

@@ -64,8 +64,3 @@ export function recordAuthFailure(request: Request): void {
     blockedUntil: shouldBlock ? now() + BLOCK_WINDOW_MS : 0,
   });
 }
-
-// Return the current auth token payload used by the login route.
-export function createAuthToken(secret: string): string {
-  return secret;
-}

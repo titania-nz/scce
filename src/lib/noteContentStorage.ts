@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getBlobStore, isNetlifyRuntime } from '@/lib/netlifyRuntime';
+import { isMissingBlobValue } from '@/lib/blobValue';
 import { resolveSafePath } from '@/lib/notesPath';
 
 interface BlobFileMetaRecord {
@@ -41,7 +42,7 @@ async function readBlobFileMeta(filename: string): Promise<BlobFileMetaRecord | 
 
   try {
     const buffer = await store.get(getBlobFileMetaKey(filename));
-    if (!buffer) return null;
+    if (isMissingBlobValue(buffer)) return null;
     const parsed = JSON.parse(new TextDecoder().decode(buffer)) as Partial<BlobFileMetaRecord>;
     if (!parsed.updatedAt && !parsed.createdAt) return null;
     return {
@@ -70,7 +71,7 @@ export async function readNoteFile(filename: string): Promise<string> {
     if (!store) throw Object.assign(new Error('File not found'), { status: 404 });
     try {
       const buffer = await store.get(key);
-      if (!buffer) throw new Error('missing');
+      if (isMissingBlobValue(buffer)) throw new Error('missing');
       return new TextDecoder().decode(buffer);
     } catch {
       throw Object.assign(new Error('File not found'), { status: 404 });
@@ -147,7 +148,7 @@ export async function renameNoteFile(oldName: string, newName: string): Promise<
     const store = getBlobStore();
     if (!store) throw new Error('Could not rename file');
     const buffer = await store.get(oldKey);
-    if (!buffer) {
+    if (isMissingBlobValue(buffer)) {
       throw Object.assign(new Error('File not found'), { status: 404 });
     }
     const existing = await store.get(newKey);

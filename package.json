@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build --webpack",
     "start": "next start",
-    "verify:revision-route-imports": "node scripts/check-revision-route-imports.mjs"
+    "verify:revision-route-imports": "node scripts/check-revision-route-imports.mjs",
+    "test:blockers": "node --test --experimental-strip-types tests/blockers.test.ts"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.5.0",
