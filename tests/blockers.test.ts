@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAuthToken, verifyAuthToken } from '../src/lib/authToken.ts';
+import { shouldResetSelectedFileAfter404 } from '../src/lib/fileLoadRecovery.ts';
 import {
   applyRevisionInlineNotesUpdate,
   parseRevisionInlineNotesUpdate,
@@ -122,5 +123,43 @@ test('revision inline note updates fail cleanly when the revision does not exist
       'status' in error &&
       error.status === 404 &&
       error.message === 'Revision not found',
+  );
+});
+
+test('selected-file 404 recovery ignores stale misses but clears truly missing files', () => {
+  assert.equal(
+    shouldResetSelectedFileAfter404({
+      hasLocalOnlyDraft: true,
+      selectedFileExists: false,
+      refreshedFileExists: false,
+    }),
+    false,
+  );
+
+  assert.equal(
+    shouldResetSelectedFileAfter404({
+      hasLocalOnlyDraft: false,
+      selectedFileExists: true,
+      refreshedFileExists: false,
+    }),
+    false,
+  );
+
+  assert.equal(
+    shouldResetSelectedFileAfter404({
+      hasLocalOnlyDraft: false,
+      selectedFileExists: false,
+      refreshedFileExists: true,
+    }),
+    false,
+  );
+
+  assert.equal(
+    shouldResetSelectedFileAfter404({
+      hasLocalOnlyDraft: false,
+      selectedFileExists: false,
+      refreshedFileExists: false,
+    }),
+    true,
   );
 });

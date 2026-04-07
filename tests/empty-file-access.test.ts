@@ -144,3 +144,27 @@ test('empty files can be created, listed, opened, and renamed through the file r
   assert.equal(renamedOpenPayload.name, renamedName);
   assert.equal(renamedOpenPayload.content, '');
 });
+
+test('new paste-style files open immediately after creation', async () => {
+  const today = new Date().toISOString().slice(0, 10);
+  const name = `claude-paste-${today}.md`;
+
+  const createResponse = await fetch(`${BASE_URL}/api/files`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: authCookie },
+    body: JSON.stringify({ name, content: '' }),
+  });
+  assert.equal(createResponse.status, 201);
+
+  const createPayload = (await createResponse.json()) as { name?: string };
+  assert.equal(createPayload.name, name);
+
+  const openResponse = await fetch(`${BASE_URL}/api/files/${encodeURIComponent(name)}`, {
+    headers: { Cookie: authCookie },
+  });
+  assert.equal(openResponse.status, 200);
+
+  const openPayload = (await openResponse.json()) as { name?: string; content?: string };
+  assert.equal(openPayload.name, name);
+  assert.equal(openPayload.content, '');
+});

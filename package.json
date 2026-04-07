@@ -7,7 +7,8 @@
     "build": "next build --webpack",
     "start": "next start",
     "verify:revision-route-imports": "node scripts/check-revision-route-imports.mjs",
-    "test:blockers": "node --test --experimental-strip-types tests/blockers.test.ts"
+    "test:blockers": "node --test --experimental-strip-types tests/blockers.test.ts",
+    "test:e2e": "playwright test tests/paste-create.spec.ts"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.5.0",
@@ -30,6 +31,7 @@
     "use-debounce": "^10.1.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.54.2",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

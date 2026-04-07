@@ -14,6 +14,7 @@ import type { ExportFormat, PublishHistoryEntry, PublishTargetProfile, Revision,
 import { RevisionStatus } from '@/types';
 import { useFiles } from '@/hooks/useFiles';
 import { buildFileApiPath, buildFilePublishApiPath } from '@/lib/fileApiPath';
+import { shouldResetSelectedFileAfter404 } from '@/lib/fileLoadRecovery';
 import { REVISION_STATUSES } from '@/lib/revisionStatus';
 
 // CodeMirror accesses browser APIs — must be dynamically imported with ssr:false
@@ -543,25 +544,62 @@ export default function EditorPage() {
       return;
     }
 
-    setSelectedFile(null);
-    setContent('');
-    setIsDirty(false);
-    setRevisionNote('');
-    setTagsInput('');
-    setStatus('');
-    setPublishHistory([]);
-    setPublishProfiles([]);
-    setPublishMessage('');
-    setLatestRevisionStatus('');
-    setOpsError(`"${selectedFile}" no longer exists.`);
-    void mutateFiles(
-      (current) => ({
-        files: (current?.files ?? []).filter((file) => file.name !== selectedFile),
-        folders: current?.folders ?? [],
-      }),
-      { revalidate: false },
-    );
-  }, [fileLoadError, hasLocalOnlyDraft, mutateFiles, selectedFile]);
+    let cancelled = false;
+    const missingFile = selectedFile;
+
+    async function confirmMissingFile() {
+      if (files.some((file) => file.name === missingFile)) {
+        setOpsError(null);
+        return;
+      }
+
+      let refreshedFiles = files;
+      try {
+        const refreshed = await mutateFiles();
+        refreshedFiles = refreshed?.files ?? [];
+      } catch {
+        // Keep the original 404 visible if the list refresh fails.
+      }
+
+      if (cancelled) return;
+
+      const shouldReset = shouldResetSelectedFileAfter404({
+        hasLocalOnlyDraft,
+        selectedFileExists: files.some((file) => file.name === missingFile),
+        refreshedFileExists: refreshedFiles.some((file) => file.name === missingFile),
+      });
+
+      if (!shouldReset) {
+        setOpsError(null);
+        return;
+      }
+
+      setSelectedFile(null);
+      setContent('');
+      setIsDirty(false);
+      setRevisionNote('');
+      setTagsInput('');
+      setStatus('');
+      setPublishHistory([]);
+      setPublishProfiles([]);
+      setPublishMessage('');
+      setLatestRevisionStatus('');
+      setOpsError(`"${missingFile}" no longer exists.`);
+      void mutateFiles(
+        (current) => ({
+          files: (current?.files ?? []).filter((file) => file.name !== missingFile),
+          folders: current?.folders ?? [],
+        }),
+        { revalidate: false },
+      );
+    }
+
+    void confirmMissingFile();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fileLoadError, files, hasLocalOnlyDraft, mutateFiles, selectedFile]);
 
   const { isSaving, saveNow } = useAutoSave({
     content,

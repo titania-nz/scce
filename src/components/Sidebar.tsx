@@ -454,6 +454,7 @@ export default function Sidebar({
     renameFile,
     renameFolder,
     updateFileCategory,
+    mutate: mutateFiles,
   } = useFiles();
   const [newFileName, setNewFileName] = useState('');
   const [showNewInput, setShowNewInput] = useState(false);
@@ -496,6 +497,7 @@ export default function Sidebar({
   const [importWizard, setImportWizard] = useState<ImportWizardState | null>(null);
   const [importTemplate, setImportTemplate] = useState('chapter-{n}-r{rev}.md');
   const [wizardLoading, setWizardLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   useEffect(() => {
     try {
@@ -871,6 +873,19 @@ export default function Sidebar({
     setClipboardContent(null);
     setAddMenuOpen(false);
     setUploadPopoverOpen(false);
+  }
+
+  async function handleManualRefresh() {
+    setError(null);
+    setIsRefreshing(true);
+    try {
+      await mutateFiles();
+    } catch (err: unknown) {
+      const e = err as { message?: string };
+      setError(e.message ?? 'Could not refresh files');
+    } finally {
+      setIsRefreshing(false);
+    }
   }
 
   async function handleCreate() {
@@ -1503,6 +1518,15 @@ export default function Sidebar({
             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
             </svg>
+          </button>
+          <button
+            onClick={() => void handleManualRefresh()}
+            className="rounded bg-gray-800 px-2.5 py-1 text-xs font-medium text-gray-200 hover:bg-gray-700 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={isRefreshing}
+            aria-label="Refresh files"
+            title="Refresh files"
+          >
+            {isRefreshing ? 'Refreshing...' : 'Refresh'}
           </button>
           <div className="relative">
             <button

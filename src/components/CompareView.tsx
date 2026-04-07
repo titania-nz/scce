@@ -186,7 +186,14 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
       } else {
         const existingFile = files.find((file) => file.name === filename);
         if (!existingFile) {
-          await createFile(filename, mergedOutput);
+          const created = await createFile(filename, mergedOutput);
+          const createdName = created?.name ?? filename;
+          await mutateFiles();
+          onFileSelect?.(createdName);
+          setSaveSuccess(`Merged output saved to ${createdName}.`);
+          setMergedDirty(false);
+          onDirtyChange?.(false);
+          return;
         } else {
           const response = await fetch(buildFileApiPath(filename), {
             method: 'PUT',
