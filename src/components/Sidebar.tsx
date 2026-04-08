@@ -877,10 +877,6 @@ export default function Sidebar({
   }
 
   useEffect(() => {
-    if (selectedFile) {
-      return;
-    }
-
     function hasDropFiles(event: DragEvent): boolean {
       const types = event.dataTransfer?.types;
       if (!types) return false;
@@ -912,7 +908,7 @@ export default function Sidebar({
   // importFilesFromList is defined in the same render scope; including it would
   // require useCallback which adds noise without benefit here.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [createFile, files, onFileSelect, selectedFile]);
+  }, [createFile, files, onFileSelect]);
 
   function resetNewInput() {
     setShowNewInput(false);
@@ -970,12 +966,6 @@ export default function Sidebar({
   }
 
   async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    if (selectedFile) {
-      setError('Upload is only available when no file is selected.');
-      e.target.value = '';
-      return;
-    }
-
     const picked = e.target.files;
     e.target.value = '';
     if (!picked || picked.length === 0) return;
@@ -983,12 +973,6 @@ export default function Sidebar({
   }
 
   async function handleZipUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    if (selectedFile) {
-      setError('Import is only available when no file is selected.');
-      e.target.value = '';
-      return;
-    }
-
     const picked = e.target.files;
     e.target.value = '';
     if (!picked || picked.length === 0) return;
@@ -996,12 +980,6 @@ export default function Sidebar({
   }
 
   async function handleFolderUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    if (selectedFile) {
-      setError('Import is only available when no file is selected.');
-      e.target.value = '';
-      return;
-    }
-
     const picked = e.target.files;
     e.target.value = '';
     if (!picked || picked.length === 0) return;
