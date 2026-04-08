@@ -204,18 +204,18 @@ interface EditorResizeDragMeta {
   splitWidth: number;
 }
 
-function getSidebarWidthBounds(workspaceWidth: number, inspectorWidth: number): { min: number; max: number } {
+function getSidebarWidthBounds(workspaceWidth: number): { min: number; max: number } {
   const max = Math.min(
     SIDEBAR_WIDTH_BOUNDS.max,
-    Math.max(SIDEBAR_WIDTH_BOUNDS.min, workspaceWidth - inspectorWidth - EDITOR_CENTER_MIN_WIDTH - RESIZE_HANDLE_WIDTH),
+    Math.max(SIDEBAR_WIDTH_BOUNDS.min, workspaceWidth - INSPECTOR_WIDTH_BOUNDS.min - EDITOR_CENTER_MIN_WIDTH - RESIZE_HANDLE_WIDTH),
   );
   return { min: SIDEBAR_WIDTH_BOUNDS.min, max };
 }
 
-function getInspectorWidthBounds(workspaceWidth: number, sidebarWidth: number): { min: number; max: number } {
+function getInspectorWidthBounds(workspaceWidth: number): { min: number; max: number } {
   const max = Math.min(
     INSPECTOR_WIDTH_BOUNDS.max,
-    Math.max(INSPECTOR_WIDTH_BOUNDS.min, workspaceWidth - sidebarWidth - EDITOR_CENTER_MIN_WIDTH - RESIZE_HANDLE_WIDTH),
+    Math.max(INSPECTOR_WIDTH_BOUNDS.min, workspaceWidth - SIDEBAR_WIDTH_BOUNDS.min - EDITOR_CENTER_MIN_WIDTH - RESIZE_HANDLE_WIDTH),
   );
   return { min: INSPECTOR_WIDTH_BOUNDS.min, max };
 }
@@ -351,14 +351,8 @@ export default function EditorPage() {
   const isSidebarVisible = isDesktopViewport ? desktopSidebarOpen : sidebarOpen;
   const isInspectorVisible = desktopInspectorOpen && workspaceMode === 'editor';
   const isInspectorPanelVisible = isInspectorVisible && isLargeDesktopViewport;
-  const sidebarWidthBounds = useMemo(
-    () => getSidebarWidthBounds(workspaceWidth, isInspectorPanelVisible ? desktopPaneLayout.inspectorWidth + RESIZE_HANDLE_WIDTH : 0),
-    [desktopPaneLayout.inspectorWidth, isInspectorPanelVisible, workspaceWidth],
-  );
-  const inspectorWidthBounds = useMemo(
-    () => getInspectorWidthBounds(workspaceWidth, isDesktopViewport && desktopSidebarOpen ? desktopPaneLayout.sidebarWidth + RESIZE_HANDLE_WIDTH : 0),
-    [desktopPaneLayout.sidebarWidth, desktopSidebarOpen, isDesktopViewport, workspaceWidth],
-  );
+  const sidebarWidthBounds = useMemo(() => getSidebarWidthBounds(workspaceWidth), [workspaceWidth]);
+  const inspectorWidthBounds = useMemo(() => getInspectorWidthBounds(workspaceWidth), [workspaceWidth]);
   const clampedPreviewRatio = useMemo(
     () => clampSplitRatio(desktopPaneLayout.previewRatio, Math.max(0, editorSplitWidth - RESIZE_HANDLE_WIDTH), EDITOR_MIN_PANE_WIDTH),
     [desktopPaneLayout.previewRatio, editorSplitWidth],
@@ -542,7 +536,7 @@ export default function EditorPage() {
   }, [isDesktopViewport, isInspectorPanelVisible, workspaceMode]);
 
   useEffect(() => {
-    if (!isDesktopViewport) return;
+    if (!isDesktopViewport || workspaceWidth <= 0 || editorSplitWidth <= 0) return;
 
     setDesktopPaneLayout((prev) => {
       const next = {

@@ -65,8 +65,19 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
   const [mergedOutputView, setMergedOutputView] = useState<MergedOutputView>('raw');
-  const [layoutMode, setLayoutMode] = useState<CompareLayoutMode>('stacked');
-  const [splitRatio, setSplitRatio] = useState(0.5);
+  const [layoutMode, setLayoutMode] = useState<CompareLayoutMode>(() => {
+    if (typeof window === 'undefined') return 'stacked';
+    const saved = window.localStorage.getItem(COMPARE_LAYOUT_STORAGE_KEY);
+    return saved === 'split' || saved === 'stacked' ? saved : 'stacked';
+  });
+  const [splitRatio, setSplitRatio] = useState(() => {
+    if (typeof window === 'undefined') return 0.5;
+    const saved = window.localStorage.getItem(COMPARE_SPLIT_RATIO_STORAGE_KEY);
+    if (saved === null) return 0.5;
+
+    const parsed = Number(saved);
+    return sanitizeStoredSplitRatio(parsed, 0.5);
+  });
   const [splitContainerWidth, setSplitContainerWidth] = useState(0);
   const [activeHunkId, setActiveHunkId] = useState<number | null>(null);
   const [isMergeConfigCollapsed, setIsMergeConfigCollapsed] = useState(false);
@@ -200,29 +211,8 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const saved = window.localStorage.getItem(COMPARE_LAYOUT_STORAGE_KEY);
-    if (saved === 'stacked' || saved === 'split') {
-      setLayoutMode(saved);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
     window.localStorage.setItem(COMPARE_LAYOUT_STORAGE_KEY, layoutMode);
   }, [layoutMode]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const saved = window.localStorage.getItem(COMPARE_SPLIT_RATIO_STORAGE_KEY);
-    if (saved === null) return;
-
-    try {
-      const parsed = Number(saved);
-      setSplitRatio(sanitizeStoredSplitRatio(parsed, 0.5));
-    } catch {
-      // Ignore malformed state.
-    }
-  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -234,6 +224,7 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
     const node = splitContainerRef.current;
     if (!node) return;
 
+    setSplitContainerWidth(node.getBoundingClientRect().width);
     const observer = new ResizeObserver((entries) => {
       const entry = entries[0];
       if (!entry) return;
@@ -407,6 +398,7 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
             <div id="compare-view-div-005" className="flex items-center gap-2">
               <span className="text-xs font-semibold text-gray-400 shrink-0">A</span>
               <select
+                data-testid="compare-file-a-select"
                 value={selectedA ?? ''}
                 onChange={(e) => {
                   const next = e.target.value || null;
@@ -439,6 +431,7 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
             <div id="compare-view-div-006" className="flex items-center gap-2">
               <span className="text-xs font-semibold text-gray-400 shrink-0">B</span>
               <select
+                data-testid="compare-file-b-select"
                 value={selectedB ?? ''}
                 onChange={(e) => {
                   const next = e.target.value || null;
@@ -596,7 +589,7 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
           }`}
           ref={splitContainerRef}
         >
-          <div id="compare-view-div-015"
+          <div id="compare-view-div-015" data-testid="compare-diff-pane"
             className={layoutMode === 'split' ? 'min-h-0 overflow-hidden xl:min-w-0 xl:flex-none' : 'min-h-0 overflow-hidden'}
             style={layoutMode === 'split' && diffPaneWidth !== null ? { width: diffPaneWidth, flex: '0 0 auto' } : undefined}
           >
@@ -653,7 +646,7 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
             />
           )}
 
-          <div id="compare-view-div-016"
+          <div id="compare-view-div-016" data-testid="compare-output-pane"
             className={`min-h-0 bg-gray-900 p-3 ${
               layoutMode === 'split'
                 ? 'flex flex-col border-t border-gray-700 xl:min-w-0 xl:flex-none xl:border-t-0 xl:border-l'
@@ -671,6 +664,8 @@ export default function CompareView({ selectedFile = null, onFileSelect, onDirty
                   ] as const).map(([view, label]) => (
                     <button
                       key={view}
+                      data-testid={`compare-layout-${view}`}
+                      aria-pressed={layoutMode === view}
                       type="button"
                       onClick={() => setLayoutMode(view)}
                       className={`rounded px-2 py-1 transition-colors ${

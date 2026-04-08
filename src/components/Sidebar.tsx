@@ -12,6 +12,12 @@ import {
 } from '@/lib/revisionMeta';
 import type { RevisionMetaSummary } from '@/lib/revisionMeta';
 import { domId, domIdSuffix } from '@/lib/domId';
+import {
+  filterSidebarTree,
+  getAncestorFolderPaths,
+  parseCollapsedFoldersState,
+  serializeCollapsedFoldersState,
+} from '@/lib/sidebarTree';
 
 interface SidebarProps {
   selectedFile: string | null;
@@ -97,6 +103,8 @@ interface VisibleFileItem extends RevisionItem {
 
 const DEFAULT_META: RevisionMeta = DEFAULT_REVISION_META;
 const SAVED_FILTERS_STORAGE_KEY = 'scce.savedSidebarFilters';
+const COLLAPSED_FOLDERS_STORAGE_KEY = 'scce.collapsedFolders.v1';
+const TREE_QUERY_STORAGE_KEY = 'scce.treeQuery.v1';
 const ROOT_FOLDER_SENTINEL = '__ROOT__';
 
 function compareVisibleFiles(a: VisibleFileItem, b: VisibleFileItem): number {
@@ -471,9 +479,9 @@ export default function Sidebar({
   const [newFileName, setNewFileName] = useState('');
   const [showNewInput, setShowNewInput] = useState(false);
   const [newFileParentPath, setNewFileParentPath] = useState<string | null>(null);
-  const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [uploadPopoverOpen, setUploadPopoverOpen] = useState(false);
-  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [treeQuery, setTreeQuery] = useState('');
   const [clipboardContent, setClipboardContent] = useState<string | null>(null);
   const [renamingFile, setRenamingFile] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -503,9 +511,11 @@ export default function Sidebar({
   const [selectedHeading, setSelectedHeading] = useState('');
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [rowMenu, setRowMenu] = useState<{ type: 'file' | 'folder'; id: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const zipInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+  const treeScrollRef = useRef<HTMLDivElement>(null);
   const renamingInFlightRef = useRef(false);
   const [importWizard, setImportWizard] = useState<ImportWizardState | null>(null);
   const [importTemplate, setImportTemplate] = useState('chapter-{n}-r{rev}.md');
@@ -534,8 +544,24 @@ export default function Sidebar({
   }, []);
 
   useEffect(() => {
+    setCollapsedFolders(parseCollapsedFoldersState(window.localStorage.getItem(COLLAPSED_FOLDERS_STORAGE_KEY)));
+    const rawQuery = window.localStorage.getItem(TREE_QUERY_STORAGE_KEY);
+    if (typeof rawQuery === 'string') {
+      setTreeQuery(rawQuery);
+    }
+  }, []);
+
+  useEffect(() => {
     window.localStorage.setItem(SAVED_FILTERS_STORAGE_KEY, JSON.stringify(savedFilters));
   }, [savedFilters]);
+
+  useEffect(() => {
+    window.localStorage.setItem(COLLAPSED_FOLDERS_STORAGE_KEY, serializeCollapsedFoldersState(collapsedFolders));
+  }, [collapsedFolders]);
+
+  useEffect(() => {
+    window.localStorage.setItem(TREE_QUERY_STORAGE_KEY, treeQuery);
+  }, [treeQuery]);
 
   function applyFilter(filter: Pick<SavedFilter, 'chapterSearch' | 'metaSearch' | 'dateFrom' | 'dateTo'>) {
     setChapterSearch(filter.chapterSearch);
@@ -743,6 +769,15 @@ export default function Sidebar({
   }, [chapterSearch, dateFrom, dateTo, files, metaSearch, revisionMetaByFile]);
 
   const tree = useMemo(() => createFolderTree(visibleItems, folders), [folders, visibleItems]);
+  const treeFilterResult = useMemo(
+    () => filterSidebarTree(tree, treeQuery, selectedFile),
+    [selectedFile, tree, treeQuery],
+  );
+  const visibleTree = treeFilterResult.tree;
+  const matchCount = treeFilterResult.matchCount;
+  const matchedFiles = treeFilterResult.matchedFiles;
+  const matchedFolderPaths = treeFilterResult.matchedFolderPaths;
+  const autoExpandedFolderPaths = treeFilterResult.autoExpandedFolderPaths;
 
   async function buildImportCandidates(entries: Array<{ name: string; content: string }>) {
     const candidates: ImportCandidate[] = [];
@@ -884,7 +919,6 @@ export default function Sidebar({
     setNewFileName('');
     setNewFileParentPath(null);
     setClipboardContent(null);
-    setAddMenuOpen(false);
     setUploadPopoverOpen(false);
   }
 
@@ -928,7 +962,6 @@ export default function Sidebar({
       const today = new Date().toISOString().slice(0, 10);
       setNewFileName(`paste-${today}`);
       setShowNewInput(true);
-      setAddMenuOpen(false);
       setUploadPopoverOpen(false);
       setError(null);
     } catch {
@@ -1076,7 +1109,6 @@ export default function Sidebar({
     setShowNewInput(false);
     setCreatingFolderParent(parentPath ?? ROOT_FOLDER_SENTINEL);
     setNewFolderValue('');
-    setAddMenuOpen(false);
     setUploadPopoverOpen(false);
     setRenamingFolder(null);
     setRenamingFile(null);
@@ -1211,6 +1243,55 @@ export default function Sidebar({
     setCollapsedFolders((prev) => ({ ...prev, [folderPath]: !prev[folderPath] }));
   }
 
+  function isFolderCollapsed(path: string): boolean {
+    if (autoExpandedFolderPaths.has(path)) return false;
+    return collapsedFolders[path] ?? false;
+  }
+
+  function focusAdjacentRow(current: HTMLElement, delta: number) {
+    const container = treeScrollRef.current;
+    if (!container) return;
+    const rows = Array.from(container.querySelectorAll<HTMLElement>('[data-sidebar-row="true"]'));
+    const index = rows.findIndex((row) => row === current);
+    if (index < 0) return;
+    const next = rows[index + delta];
+    if (!next) return;
+    next.focus();
+  }
+
+  function revealSelectedFileInTree() {
+    if (!selectedFile) return;
+    const ancestors = getAncestorFolderPaths(selectedFile);
+    if (ancestors.length > 0) {
+      setCollapsedFolders((prev) => {
+        const next = { ...prev };
+        ancestors.forEach((path) => {
+          next[path] = false;
+        });
+        return next;
+      });
+    }
+
+    window.requestAnimationFrame(() => {
+      const rows = Array.from(document.querySelectorAll<HTMLElement>('[data-file-name]'));
+      const el = rows.find((row) => row.dataset.fileName === selectedFile) ?? null;
+      el?.scrollIntoView({ block: 'nearest' });
+      el?.focus();
+    });
+  }
+
+  useEffect(() => {
+    if (!rowMenu) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (target.closest('[data-row-menu="true"]')) return;
+      setRowMenu(null);
+    };
+    window.addEventListener('pointerdown', onPointerDown);
+    return () => window.removeEventListener('pointerdown', onPointerDown);
+  }, [rowMenu]);
+
   function handleJumpToHeading() {
     if (!selectedHeading) return;
     onJumpToHeading(selectedHeading);
@@ -1221,7 +1302,6 @@ export default function Sidebar({
     setNewFileParentPath(parentPath);
     setNewFileName(parentPath ? 'untitled.md' : '');
     setClipboardContent(null);
-    setAddMenuOpen(false);
     setUploadPopoverOpen(false);
     setError(null);
     setCreatingFolderParent(null);
@@ -1230,22 +1310,49 @@ export default function Sidebar({
   function renderFileRow(revision: VisibleFileItem) {
     const isChecked = selectedFiles.has(revision.file.name);
     const fileIdSuffix = domIdSuffix(revision.file.name, revision.baseName);
+    const isSearchMatched = matchedFiles.has(revision.file.name);
+    const menuOpen = rowMenu?.type === 'file' && rowMenu.id === revision.file.name;
 
     return (
-      <div id={domId('sidebar-div-001', fileIdSuffix)}
+      <div
+        id={domId('sidebar-div-001', fileIdSuffix)}
         key={revision.file.name}
-        className={`group border-l-2 px-4 py-2 cursor-pointer hover:bg-gray-800/70 transition-colors ${
+        data-sidebar-row="true"
+        data-file-name={revision.file.name}
+        tabIndex={0}
+        className={`relative border-l-2 px-3 py-2 cursor-pointer transition-colors focus:outline-none focus:ring-1 focus:ring-blue-500 ${
           selectionMode && isChecked
-            ? 'bg-gray-800/50 border-blue-500'
+            ? 'bg-blue-950/40 border-blue-400'
             : !selectionMode && selectedFile === revision.file.name
-            ? 'bg-gray-800 border-blue-500'
-            : 'border-transparent'
+            ? 'bg-blue-950/30 border-blue-500'
+            : 'border-transparent hover:bg-gray-800/70'
         }`}
         onClick={() => {
+          setRowMenu(null);
           if (selectionMode) {
             toggleFileSelection(revision.file.name);
           } else {
             onFileSelect(revision.file.name);
+          }
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            if (selectionMode) {
+              toggleFileSelection(revision.file.name);
+            } else {
+              onFileSelect(revision.file.name);
+            }
+            return;
+          }
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            focusAdjacentRow(e.currentTarget, 1);
+            return;
+          }
+          if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            focusAdjacentRow(e.currentTarget, -1);
           }
         }}
       >
@@ -1337,7 +1444,7 @@ export default function Sidebar({
           </div>
         ) : (
           <>
-            <div id={domId('sidebar-div-005', fileIdSuffix)} className="flex items-center gap-2">
+            <div id={domId('sidebar-div-005', fileIdSuffix)} className="flex items-start gap-2">
               {selectionMode && (
                 <input
                   type="checkbox"
@@ -1348,120 +1455,119 @@ export default function Sidebar({
                   aria-label={`Select ${revision.file.name}`}
                 />
               )}
-              <span className="text-sm truncate">{revision.baseName}</span>
-              {revision.revisionOrder !== null && (
-                <span className="text-[10px] uppercase text-gray-500">{revision.revisionLabel}</span>
-              )}
-              {!selectionMode && (
-                <div id={domId('sidebar-div-006', fileIdSuffix)} className="ml-auto flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                  {!revision.file.category?.isPrimary && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        const resolved = getResolvedFileStructure(revision.file);
-                        void updateFileCategory(revision.file.name, {
-                          document: revision.file.category?.document ?? resolved.document,
-                          chapter: revision.file.category?.chapter ?? resolved.chapter,
-                          isPrimary: true,
-                        }).catch((err: unknown) => {
-                          const updateError = err as { message?: string };
-                          setError(updateError.message ?? 'Could not set primary file');
-                        });
-                      }}
-                      className="text-gray-400 hover:text-amber-300 p-0.5"
-                      title="Set as primary file"
-                      aria-label={`Set ${revision.file.name} as primary file`}
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.52 4.674a1 1 0 00.95.69h4.914c.969 0 1.371 1.24.588 1.81l-3.976 2.889a1 1 0 00-.364 1.118l1.52 4.674c.3.922-.755 1.688-1.539 1.118l-3.976-2.889a1 1 0 00-1.176 0l-3.976 2.889c-.783.57-1.838-.196-1.539-1.118l1.52-4.674a1 1 0 00-.364-1.118L2.557 10.1c-.783-.57-.38-1.81.588-1.81h4.914a1 1 0 00.95-.69l1.52-4.674z" />
-                      </svg>
-                    </button>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm truncate">
+                    {renderHighlightedText(revision.baseName, treeQuery)}
+                  </span>
+                  {revision.revisionOrder !== null && (
+                    <span className="text-[10px] uppercase text-gray-500">{revision.revisionLabel}</span>
                   )}
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      startCategoryEdit(revision.file);
-                    }}
-                    className="text-gray-400 hover:text-white p-0.5"
-                    title={revision.file.category ? 'Re-categorise' : 'Categorise'}
-                    aria-label={`${revision.file.category ? 'Re-categorise' : 'Categorise'} ${revision.file.name}`}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7a2 2 0 012-2h5l2 2h7a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
-                    </svg>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      startRename(revision.file);
-                    }}
-                    className="text-gray-400 hover:text-white p-0.5"
-                    title="Rename / move"
-                    aria-label={`Rename ${revision.file.name}`}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                    </svg>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      void handleArchive(revision.file);
-                    }}
-                    className="text-gray-400 hover:text-amber-300 p-0.5"
-                    title="Archive"
-                    aria-label={`Archive ${revision.file.name}`}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8h14M7 8V6a1 1 0 011-1h8a1 1 0 011 1v2m-9 4h8m-8 4h5m-8 5h14a2 2 0 002-2V8H3v11a2 2 0 002 2z" />
-                    </svg>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      void handleDelete(revision.file);
-                    }}
-                    className="text-gray-400 hover:text-red-400 p-0.5"
-                    title="Delete"
-                    aria-label={`Delete ${revision.file.name}`}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                    </svg>
-                  </button>
+                  {isSearchMatched && treeQuery.trim() && (
+                    <span className="rounded bg-blue-500/20 px-1.5 py-0.5 text-[10px] text-blue-200">Match</span>
+                  )}
                 </div>
-              )}
-            </div>
-
-            <div id={domId('sidebar-div-007', fileIdSuffix)} className="mt-1 text-[11px] text-gray-400 space-y-0.5">
-              <div id={domId('sidebar-div-008', fileIdSuffix)} className="truncate">
-                {revision.file.name}
-                {revision.file.category && (
-                  <span className="ml-2 rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] text-blue-200">
-                    Categorised
-                  </span>
-                )}
-                {revision.file.category?.isPrimary && (
-                  <span className="ml-2 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-200">
-                    Primary
-                  </span>
-                )}
+                <div id={domId('sidebar-div-007', fileIdSuffix)} className="mt-1 text-[11px] text-gray-400 space-y-0.5">
+                  <div id={domId('sidebar-div-008', fileIdSuffix)} className="truncate">
+                    {renderHighlightedText(revision.file.name, treeQuery)}
+                    {revision.file.category && (
+                      <span className="ml-2 rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] text-blue-200">
+                        Categorised
+                      </span>
+                    )}
+                    {revision.file.category?.isPrimary && (
+                      <span className="ml-2 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-200">
+                        Primary
+                      </span>
+                    )}
+                  </div>
+                  <div id={domId('sidebar-div-009', fileIdSuffix)} className="truncate">{revision.document} / {revision.chapter}</div>
+                  <div id={domId('sidebar-div-010', fileIdSuffix)}>Created: {formatDate(revision.file.ctime ?? revision.file.mtime)}</div>
+                </div>
               </div>
-              <div id={domId('sidebar-div-009', fileIdSuffix)} className="truncate">{revision.document} / {revision.chapter}</div>
-              <div id={domId('sidebar-div-010', fileIdSuffix)}>Created: {formatDate(revision.file.ctime ?? revision.file.mtime)}</div>
-              {revision.meta.note && <div id={domId('sidebar-div-011', fileIdSuffix)} className="truncate">{revision.meta.note}</div>}
-              {revision.meta.tags.length > 0 && (
-                <div id={domId('sidebar-div-012', fileIdSuffix)} className="truncate text-blue-300/90">#{revision.meta.tags.join(' #')}</div>
+              {!selectionMode && (
+                <div id={domId('sidebar-div-006', fileIdSuffix)} className="relative shrink-0" data-row-menu="true">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setRowMenu((prev) => (prev?.type === 'file' && prev.id === revision.file.name ? null : { type: 'file', id: revision.file.name }));
+                    }}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded border border-gray-700 text-gray-300 hover:bg-gray-800"
+                    aria-label={`Actions for ${revision.file.name}`}
+                  >
+                    <span className="text-base leading-none">⋯</span>
+                  </button>
+                  {menuOpen && (
+                    <div className="absolute right-0 top-9 z-30 w-44 rounded border border-gray-700 bg-gray-900 p-1 shadow-xl">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          startRename(revision.file);
+                          setRowMenu(null);
+                        }}
+                        className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800"
+                      >
+                        Rename / move
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          startCategoryEdit(revision.file);
+                          setRowMenu(null);
+                        }}
+                        className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800"
+                      >
+                        {revision.file.category ? 'Re-categorise' : 'Categorise'}
+                      </button>
+                      {!revision.file.category?.isPrimary && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const resolved = getResolvedFileStructure(revision.file);
+                            void updateFileCategory(revision.file.name, {
+                              document: revision.file.category?.document ?? resolved.document,
+                              chapter: revision.file.category?.chapter ?? resolved.chapter,
+                              isPrimary: true,
+                            }).catch((err: unknown) => {
+                              const updateError = err as { message?: string };
+                              setError(updateError.message ?? 'Could not set primary file');
+                            });
+                            setRowMenu(null);
+                          }}
+                          className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800"
+                        >
+                          Set as primary
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleArchive(revision.file);
+                          setRowMenu(null);
+                        }}
+                        className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800"
+                      >
+                        Archive
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleDelete(revision.file);
+                          setRowMenu(null);
+                        }}
+                        className="block w-full rounded px-2 py-1.5 text-left text-xs text-red-300 hover:bg-red-950/40"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </>
@@ -1471,24 +1577,55 @@ export default function Sidebar({
   }
 
   function renderFolderNode(node: FileTreeNode, depth = 0) {
-    const collapsed = collapsedFolders[node.path] ?? false;
+    const collapsed = isFolderCollapsed(node.path);
     const isRenaming = renamingFolder === node.path;
     const isCreatingChildFolder = creatingFolderParent === node.path;
     const folderIdSuffix = domIdSuffix(node.path, node.name);
+    const menuOpen = rowMenu?.type === 'folder' && rowMenu.id === node.path;
+    const isSearchMatched = matchedFolderPaths.has(node.path);
 
     return (
       <div id={domId('sidebar-div-013', folderIdSuffix)} key={node.path} className={depth > 0 ? 'border-t border-gray-800/40' : ''}>
         <div id={domId('sidebar-div-014', folderIdSuffix)}
-          className="group flex items-center gap-2 px-3 py-2 hover:bg-gray-800/50 transition-colors"
-          style={{ paddingLeft: `${12 + depth * 14}px` }}
+          data-sidebar-row="true"
+          data-folder-path={node.path}
+          tabIndex={0}
+          className="group flex items-center gap-2 px-3 py-2 hover:bg-gray-800/50 transition-colors focus:outline-none focus:ring-1 focus:ring-blue-500"
+          style={{ paddingLeft: `${12 + depth * 16}px` }}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowDown') {
+              e.preventDefault();
+              focusAdjacentRow(e.currentTarget, 1);
+              return;
+            }
+            if (e.key === 'ArrowUp') {
+              e.preventDefault();
+              focusAdjacentRow(e.currentTarget, -1);
+              return;
+            }
+            if (e.key === 'ArrowLeft' && !collapsed) {
+              e.preventDefault();
+              toggleFolder(node.path);
+              return;
+            }
+            if (e.key === 'ArrowRight' && collapsed) {
+              e.preventDefault();
+              toggleFolder(node.path);
+              return;
+            }
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              toggleFolder(node.path);
+            }
+          }}
         >
           <button
             type="button"
             onClick={() => toggleFolder(node.path)}
-            className="text-gray-500 hover:text-gray-300"
+            className="inline-flex h-6 w-6 items-center justify-center rounded border border-gray-700 text-gray-400 hover:text-gray-100"
             aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${node.name}`}
           >
-            <span className="text-[10px]">{collapsed ? '+' : '-'}</span>
+            <span className="text-xs">{collapsed ? '▸' : '▾'}</span>
           </button>
           <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 text-amber-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7a2 2 0 012-2h5l2 2h7a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
@@ -1507,54 +1644,70 @@ export default function Sidebar({
               autoFocus
             />
           ) : (
-            <span className="text-sm text-gray-200 truncate flex-1">{node.name}</span>
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <span className="text-sm text-gray-200 truncate flex-1">{renderHighlightedText(node.name, treeQuery)}</span>
+              {isSearchMatched && treeQuery.trim() && (
+                <span className="rounded bg-blue-500/20 px-1.5 py-0.5 text-[10px] text-blue-200">Match</span>
+              )}
+            </div>
           )}
           {!selectionMode && !isRenaming && (
-            <div id={domId('sidebar-div-015', folderIdSuffix)} className="ml-auto flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+            <div id={domId('sidebar-div-015', folderIdSuffix)} className="relative ml-auto shrink-0" data-row-menu="true">
               <button
                 type="button"
-                onClick={() => openNewFileInput(node.path)}
-                className="text-gray-400 hover:text-white p-0.5"
-                title="New file in folder"
-                aria-label={`New file in ${node.path}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setRowMenu((prev) => (prev?.type === 'folder' && prev.id === node.path ? null : { type: 'folder', id: node.path }));
+                }}
+                className="inline-flex h-8 w-8 items-center justify-center rounded border border-gray-700 text-gray-300 hover:bg-gray-800"
+                aria-label={`Actions for ${node.path}`}
               >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                </svg>
+                <span className="text-base leading-none">⋯</span>
               </button>
-              <button
-                type="button"
-                onClick={() => startFolderCreate(node.path)}
-                className="text-gray-400 hover:text-white p-0.5"
-                title="New subfolder"
-                aria-label={`New subfolder in ${node.path}`}
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7a2 2 0 012-2h5l2 2h3m4 0h2m-1-1v2m-6 9h7a2 2 0 002-2V9a2 2 0 00-2-2h-7l-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2h4" />
-                </svg>
-              </button>
-              <button
-                type="button"
-                onClick={() => startFolderRename(node.path)}
-                className="text-gray-400 hover:text-white p-0.5"
-                title="Rename / move folder"
-                aria-label={`Rename ${node.path}`}
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                </svg>
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleDeleteFolder(node.path)}
-                className="text-gray-400 hover:text-red-400 p-0.5"
-                title="Delete folder"
-                aria-label={`Delete ${node.path}`}
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
-              </button>
+              {menuOpen && (
+                <div className="absolute right-0 top-9 z-30 w-44 rounded border border-gray-700 bg-gray-900 p-1 shadow-xl">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      openNewFileInput(node.path);
+                      setRowMenu(null);
+                    }}
+                    className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800"
+                  >
+                    New file
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      startFolderCreate(node.path);
+                      setRowMenu(null);
+                    }}
+                    className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800"
+                  >
+                    New subfolder
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      startFolderRename(node.path);
+                      setRowMenu(null);
+                    }}
+                    className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800"
+                  >
+                    Rename / move
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleDeleteFolder(node.path);
+                      setRowMenu(null);
+                    }}
+                    className="block w-full rounded px-2 py-1.5 text-left text-xs text-red-300 hover:bg-red-950/40"
+                  >
+                    Delete
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -1588,105 +1741,113 @@ export default function Sidebar({
 
   return (
     <aside className="flex flex-col h-full bg-gray-900 text-gray-100 w-80 shrink-0 border-r border-gray-800">
-      <div id="sidebar-div-018" className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
-        <span className="text-sm font-semibold text-gray-300 uppercase tracking-wider">Files</span>
-        <div id="sidebar-div-019" className="flex items-center gap-2">
-          <button
-            onClick={() => {
-              if (selectionMode) {
-                exitSelectionMode();
-              } else {
-                setSelectionMode(true);
-              }
-            }}
-            className={`transition-colors ${selectionMode ? 'text-blue-400 hover:text-blue-300' : 'text-gray-400 hover:text-white'}`}
-            title={selectionMode ? 'Cancel selection' : 'Select files'}
-            aria-label={selectionMode ? 'Cancel selection' : 'Select files'}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-            </svg>
-          </button>
+      <div className="sticky top-0 z-20 border-b border-gray-700 bg-gray-900/95 backdrop-blur supports-[backdrop-filter]:bg-gray-900/85">
+        <div id="sidebar-div-018" className="flex items-center justify-between px-3 py-3">
+          <span className="text-sm font-semibold text-gray-300 uppercase tracking-wider">Files</span>
           <button
             onClick={() => void handleManualRefresh()}
-            className="rounded bg-gray-800 px-2.5 py-1 text-xs font-medium text-gray-200 hover:bg-gray-700 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+            className="rounded border border-gray-700 bg-gray-800 px-2.5 py-1 text-xs font-medium text-gray-200 hover:bg-gray-700 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             disabled={isRefreshing}
             aria-label="Refresh files"
             title="Refresh files"
           >
             {isRefreshing ? 'Refreshing...' : 'Refresh'}
           </button>
-          <div id="sidebar-div-020" className="relative">
-            <button
-              onClick={() => {
-                setAddMenuOpen((open) => !open);
-                setUploadPopoverOpen(false);
-              }}
-              className="rounded bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-500 transition-colors"
-              aria-haspopup="menu"
-              aria-expanded={addMenuOpen}
-            >
-              Add
-            </button>
-            {addMenuOpen && (
-              <div id="sidebar-div-021" className="absolute right-0 top-9 z-30 w-52 rounded border border-gray-700 bg-gray-900 p-1 shadow-xl">
-                <button
-                  onClick={() => openNewFileInput(null)}
-                  className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800"
-                >
-                  New file
-                </button>
-                <button
-                  onClick={() => startFolderCreate(null)}
-                  className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800"
-                >
-                  New folder
-                </button>
-                <button
-                  onClick={() => void handlePasteFromClipboard()}
-                  className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800"
-                >
-                  Paste from clipboard
-                </button>
-                <div className="my-1 border-t border-gray-800" />
-                <button
-                  onClick={() => setUploadPopoverOpen((open) => !open)}
-                  className="flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800"
-                  disabled={Boolean(selectedFile)}
-                >
-                  <span>Upload or import</span>
-                  <span className="text-[10px] text-gray-500">{uploadPopoverOpen ? 'Hide' : 'Show'}</span>
-                </button>
-                {uploadPopoverOpen && (
-                  <div id="sidebar-div-022" className="mt-1 space-y-1 rounded border border-gray-800 bg-gray-950/60 p-1">
-                    <button
-                      onClick={() => fileInputRef.current?.click()}
-                      className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800"
-                    >
-                      Upload markdown files
-                    </button>
-                    <button
-                      onClick={() => zipInputRef.current?.click()}
-                      className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800"
-                    >
-                      Import ZIP
-                    </button>
-                    <button
-                      onClick={() => folderInputRef.current?.click()}
-                      className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800"
-                    >
-                      Import folder
-                    </button>
-                    {selectedFile && (
-                      <p className="px-2 py-1 text-[11px] text-gray-500">
-                        Clear the current selection before importing.
-                      </p>
-                    )}
-                  </div>
-                )}
-              </div>
+        </div>
+        <div className="px-3 pb-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={treeQuery}
+              onChange={(e) => setTreeQuery(e.target.value)}
+              placeholder="Search file or folder path"
+              className="w-full bg-gray-800 text-gray-100 text-sm px-2.5 py-2 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
+              aria-label="Search files and folders"
+            />
+            {selectedFile && (
+              <button
+                type="button"
+                onClick={revealSelectedFileInTree}
+                className="rounded border border-gray-700 bg-gray-800 px-2.5 py-2 text-xs text-gray-200 hover:bg-gray-700"
+              >
+                Reveal
+              </button>
             )}
           </div>
+          {treeQuery.trim() && (
+            <div className="text-[11px] text-gray-400">
+              {matchCount} match{matchCount === 1 ? '' : 'es'}
+            </div>
+          )}
+          <div className="grid grid-cols-3 gap-2">
+            <button
+              onClick={() => openNewFileInput(null)}
+              className="rounded border border-gray-700 bg-gray-800 px-2 py-2 text-xs text-gray-100 hover:bg-gray-700"
+            >
+              New
+            </button>
+            <button
+              onClick={() => startFolderCreate(null)}
+              className="rounded border border-gray-700 bg-gray-800 px-2 py-2 text-xs text-gray-100 hover:bg-gray-700"
+            >
+              New Folder
+            </button>
+            <button
+              onClick={() => {
+                setUploadPopoverOpen((open) => !open);
+                setRowMenu(null);
+              }}
+              className="rounded border border-gray-700 bg-gray-800 px-2 py-2 text-xs text-gray-100 hover:bg-gray-700"
+            >
+              Import
+            </button>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={() => {
+                if (selectionMode) {
+                  exitSelectionMode();
+                } else {
+                  setSelectionMode(true);
+                }
+              }}
+              className={`rounded border px-2 py-2 text-xs transition-colors ${
+                selectionMode
+                  ? 'border-blue-700 bg-blue-950/40 text-blue-200'
+                  : 'border-gray-700 bg-gray-800 text-gray-200 hover:bg-gray-700'
+              }`}
+            >
+              {selectionMode ? 'Cancel Select' : 'Select'}
+            </button>
+            <button
+              onClick={() => void handlePasteFromClipboard()}
+              className="rounded border border-gray-700 bg-gray-800 px-2 py-2 text-xs text-gray-200 hover:bg-gray-700"
+            >
+              Paste
+            </button>
+          </div>
+          {uploadPopoverOpen && (
+            <div id="sidebar-div-022" className="space-y-1 rounded border border-gray-800 bg-gray-950/60 p-2">
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="block w-full rounded px-2 py-2 text-left text-xs text-gray-200 hover:bg-gray-800"
+              >
+                Upload markdown files
+              </button>
+              <button
+                onClick={() => zipInputRef.current?.click()}
+                className="block w-full rounded px-2 py-2 text-left text-xs text-gray-200 hover:bg-gray-800"
+              >
+                Import ZIP
+              </button>
+              <button
+                onClick={() => folderInputRef.current?.click()}
+                className="block w-full rounded px-2 py-2 text-left text-xs text-gray-200 hover:bg-gray-800"
+              >
+                Import folder
+              </button>
+            </div>
+          )}
           <input
             ref={fileInputRef}
             type="file"
@@ -1716,14 +1877,14 @@ export default function Sidebar({
       <div id="sidebar-div-023" className="border-b border-gray-800 px-3 py-2">
         <button
           type="button"
-          onClick={() => setFiltersOpen((open) => !open)}
+          onClick={() => setAdvancedOpen((open) => !open)}
           className="flex w-full items-center justify-between rounded bg-gray-800/70 px-3 py-2 text-left text-xs font-medium text-gray-200 hover:bg-gray-800"
         >
-          <span>Filters</span>
-          <span className="text-gray-500">{filtersOpen ? 'Hide' : 'Show'}</span>
+          <span>Advanced</span>
+          <span className="text-gray-500">{advancedOpen ? 'Hide' : 'Show'}</span>
         </button>
 
-        {filtersOpen && (
+        {advancedOpen && (
           <div id="sidebar-div-024" className="mt-2 space-y-3 rounded border border-gray-800 bg-gray-950/40 p-3">
             <div id="sidebar-div-025" className="space-y-2">
               <div id="sidebar-div-026" className="text-[11px] uppercase tracking-wide text-gray-500">Quick filters</div>
@@ -2028,7 +2189,7 @@ export default function Sidebar({
         </div>
       )}
 
-      <div id="sidebar-div-053" className="flex-1 overflow-y-auto">
+      <div id="sidebar-div-053" ref={treeScrollRef} className="flex-1 overflow-y-auto">
         {globalQuery.trim() && (
           <div id="sidebar-div-054" className="border-b border-gray-700/60">
             <div id="sidebar-div-055" className="px-3 py-2 text-[11px] text-gray-400">
@@ -2059,14 +2220,14 @@ export default function Sidebar({
           </div>
         )}
         {isLoading && <div id="sidebar-div-060" className="px-4 py-3 text-sm text-gray-500">Loading...</div>}
-        {!isLoading && tree.folders.length === 0 && tree.rootFiles.length === 0 && (
+        {!isLoading && visibleTree.folders.length === 0 && visibleTree.rootFiles.length === 0 && (
           <div id="sidebar-div-061" className="px-4 py-3 text-sm text-gray-500">No matching files</div>
         )}
 
-        {tree.folders.map((folder) => renderFolderNode(folder))}
-        {tree.rootFiles.length > 0 && (
-          <div id="sidebar-div-062" className={tree.folders.length > 0 ? 'border-t border-gray-800/50' : ''}>
-            {tree.rootFiles.map(renderFileRow)}
+        {visibleTree.folders.map((folder) => renderFolderNode(folder))}
+        {visibleTree.rootFiles.length > 0 && (
+          <div id="sidebar-div-062" className={visibleTree.folders.length > 0 ? 'border-t border-gray-800/50' : ''}>
+            {visibleTree.rootFiles.map(renderFileRow)}
           </div>
         )}
       </div>
