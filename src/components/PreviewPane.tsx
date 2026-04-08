@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
+import { domId, domIdSuffix } from '@/lib/domId';
 
 interface PreviewPaneProps {
   content: string;
@@ -50,14 +51,14 @@ export default function PreviewPane({ content, jumpToHeadingToken, scrollToText 
 
   if (!content.trim()) {
     return (
-      <div className="flex-1 flex items-center justify-center text-gray-500 text-sm bg-white dark:bg-gray-950 overflow-y-auto">
+      <div id="preview-pane-div-001" className="flex-1 flex items-center justify-center text-gray-500 text-sm bg-white dark:bg-gray-950 overflow-y-auto">
         Nothing to preview
       </div>
     );
   }
 
   return (
-    <div ref={containerRef} className="flex-1 overflow-y-auto bg-white dark:bg-gray-950 px-6 py-6">
+    <div id="preview-pane-div-002" ref={containerRef} className="flex-1 overflow-y-auto bg-white dark:bg-gray-950 px-6 py-6">
       <article className="prose prose-gray dark:prose-invert max-w-none">
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}

@@ -5,6 +5,7 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { languages } from '@codemirror/language-data';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { EditorView } from '@codemirror/view';
+import { domId, domIdSuffix } from '@/lib/domId';
 
 interface EditorPaneProps {
   value: string;
@@ -20,7 +21,7 @@ const extensions = [
 // Main component export: this is the entry point rendered by parent routes/components.
 export default function EditorPane({ value, onChange, readOnly = false }: EditorPaneProps) {
   return (
-    <div className="flex-1 overflow-hidden flex flex-col">
+    <div id="editor-pane-div-001" className="flex-1 overflow-hidden flex flex-col">
       <CodeMirror
         value={value}
         onChange={onChange}

@@ -1,5 +1,7 @@
 'use client';
 
+import { domId, domIdSuffix } from '@/lib/domId';
+
 interface ToolbarProps {
   filename: string | null;
   isDirty: boolean;
@@ -65,7 +67,7 @@ export default function Toolbar({
   const inspectorToggleLabel = isInspectorOpen ? 'Hide inspector' : 'Show inspector';
 
   return (
-    <div className="flex items-center gap-2 px-3 h-12 bg-gray-800 border-b border-gray-700 shrink-0">
+    <div id="toolbar-div-001" className="flex items-center gap-2 px-3 h-12 bg-gray-800 border-b border-gray-700 shrink-0">
       <button
         onClick={onToggleSidebar}
         className="flex items-center gap-2 rounded border border-gray-700 bg-gray-900/50 px-2 py-1.5 text-gray-300 transition-colors hover:bg-gray-700 hover:text-white shrink-0"
@@ -104,7 +106,7 @@ export default function Toolbar({
         {queuedSyncCount > 0 ? ` • ${queuedSyncCount} queued` : ''}
       </span>
 
-      <div className="hidden md:flex items-center gap-1 rounded border border-gray-700 bg-gray-900/50 p-1 shrink-0">
+      <div id="toolbar-div-002" className="hidden md:flex items-center gap-1 rounded border border-gray-700 bg-gray-900/50 p-1 shrink-0">
         {(['editor', 'compare', 'documents'] as const).map((mode) => (
           <button
             key={mode}
@@ -135,7 +137,7 @@ export default function Toolbar({
         Inspector
       </button>
 
-      <div className="relative shrink-0">
+      <div id="toolbar-div-003" className="relative shrink-0">
         <button
           onClick={onToggleUtilities}
           className="px-2.5 py-1 text-xs rounded bg-gray-700 text-gray-200 hover:bg-gray-600"
@@ -143,7 +145,7 @@ export default function Toolbar({
           Utilities
         </button>
         {isUtilitiesOpen && (
-          <div className="absolute right-0 top-9 z-30 w-44 rounded border border-gray-700 bg-gray-900 p-1 shadow-xl">
+          <div id="toolbar-div-004" className="absolute right-0 top-9 z-30 w-44 rounded border border-gray-700 bg-gray-900 p-1 shadow-xl">
             <button onClick={onOpenRecoveryPanel} className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800">Restore drafts</button>
             <button onClick={onOpenStorageHealth} className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800">Storage health</button>
             <button onClick={onExportBackup} className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800">Export backup</button>
@@ -152,7 +154,7 @@ export default function Toolbar({
       </div>
 
       {/* Mobile Edit/Preview tabs */}
-      <div className={`md:hidden flex rounded overflow-hidden border border-gray-600 ${workspaceMode !== 'editor' ? 'hidden' : ''}`}>
+      <div id="toolbar-div-005" className={`md:hidden flex rounded overflow-hidden border border-gray-600 ${workspaceMode !== 'editor' ? 'hidden' : ''}`}>
         <button
           onClick={() => onMobileViewChange('edit')}
           className={`px-3 py-1 text-xs transition-colors ${

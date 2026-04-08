@@ -11,6 +11,7 @@ import {
   parseMetaFromContent,
 } from '@/lib/revisionMeta';
 import type { RevisionMetaSummary } from '@/lib/revisionMeta';
+import { domId, domIdSuffix } from '@/lib/domId';
 
 interface SidebarProps {
   selectedFile: string | null;
@@ -1228,9 +1229,10 @@ export default function Sidebar({
 
   function renderFileRow(revision: VisibleFileItem) {
     const isChecked = selectedFiles.has(revision.file.name);
+    const fileIdSuffix = domIdSuffix(revision.file.name, revision.baseName);
 
     return (
-      <div
+      <div id={domId('sidebar-div-001', fileIdSuffix)}
         key={revision.file.name}
         className={`group border-l-2 px-4 py-2 cursor-pointer hover:bg-gray-800/70 transition-colors ${
           selectionMode && isChecked
@@ -1261,8 +1263,8 @@ export default function Sidebar({
             autoFocus
           />
         ) : categorizingFile === revision.file.name ? (
-          <div className="space-y-2">
-            <div className="grid grid-cols-2 gap-2">
+          <div id={domId('sidebar-div-002', fileIdSuffix)} className="space-y-2">
+            <div id={domId('sidebar-div-003', fileIdSuffix)} className="grid grid-cols-2 gap-2">
               <input
                 type="text"
                 value={categoryDocumentValue}
@@ -1292,7 +1294,7 @@ export default function Sidebar({
               />
               Set as primary file for this story/chapter
             </label>
-            <div className="flex gap-2">
+            <div id={domId('sidebar-div-004', fileIdSuffix)} className="flex gap-2">
               <button
                 type="button"
                 onClick={(e) => {
@@ -1335,7 +1337,7 @@ export default function Sidebar({
           </div>
         ) : (
           <>
-            <div className="flex items-center gap-2">
+            <div id={domId('sidebar-div-005', fileIdSuffix)} className="flex items-center gap-2">
               {selectionMode && (
                 <input
                   type="checkbox"
@@ -1351,7 +1353,7 @@ export default function Sidebar({
                 <span className="text-[10px] uppercase text-gray-500">{revision.revisionLabel}</span>
               )}
               {!selectionMode && (
-                <div className="ml-auto flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                <div id={domId('sidebar-div-006', fileIdSuffix)} className="ml-auto flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
                   {!revision.file.category?.isPrimary && (
                     <button
                       type="button"
@@ -1441,8 +1443,8 @@ export default function Sidebar({
               )}
             </div>
 
-            <div className="mt-1 text-[11px] text-gray-400 space-y-0.5">
-              <div className="truncate">
+            <div id={domId('sidebar-div-007', fileIdSuffix)} className="mt-1 text-[11px] text-gray-400 space-y-0.5">
+              <div id={domId('sidebar-div-008', fileIdSuffix)} className="truncate">
                 {revision.file.name}
                 {revision.file.category && (
                   <span className="ml-2 rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] text-blue-200">
@@ -1455,11 +1457,11 @@ export default function Sidebar({
                   </span>
                 )}
               </div>
-              <div className="truncate">{revision.document} / {revision.chapter}</div>
-              <div>Created: {formatDate(revision.file.ctime ?? revision.file.mtime)}</div>
-              {revision.meta.note && <div className="truncate">{revision.meta.note}</div>}
+              <div id={domId('sidebar-div-009', fileIdSuffix)} className="truncate">{revision.document} / {revision.chapter}</div>
+              <div id={domId('sidebar-div-010', fileIdSuffix)}>Created: {formatDate(revision.file.ctime ?? revision.file.mtime)}</div>
+              {revision.meta.note && <div id={domId('sidebar-div-011', fileIdSuffix)} className="truncate">{revision.meta.note}</div>}
               {revision.meta.tags.length > 0 && (
-                <div className="truncate text-blue-300/90">#{revision.meta.tags.join(' #')}</div>
+                <div id={domId('sidebar-div-012', fileIdSuffix)} className="truncate text-blue-300/90">#{revision.meta.tags.join(' #')}</div>
               )}
             </div>
           </>
@@ -1472,10 +1474,11 @@ export default function Sidebar({
     const collapsed = collapsedFolders[node.path] ?? false;
     const isRenaming = renamingFolder === node.path;
     const isCreatingChildFolder = creatingFolderParent === node.path;
+    const folderIdSuffix = domIdSuffix(node.path, node.name);
 
     return (
-      <div key={node.path} className={depth > 0 ? 'border-t border-gray-800/40' : ''}>
-        <div
+      <div id={domId('sidebar-div-013', folderIdSuffix)} key={node.path} className={depth > 0 ? 'border-t border-gray-800/40' : ''}>
+        <div id={domId('sidebar-div-014', folderIdSuffix)}
           className="group flex items-center gap-2 px-3 py-2 hover:bg-gray-800/50 transition-colors"
           style={{ paddingLeft: `${12 + depth * 14}px` }}
         >
@@ -1507,7 +1510,7 @@ export default function Sidebar({
             <span className="text-sm text-gray-200 truncate flex-1">{node.name}</span>
           )}
           {!selectionMode && !isRenaming && (
-            <div className="ml-auto flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+            <div id={domId('sidebar-div-015', folderIdSuffix)} className="ml-auto flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
               <button
                 type="button"
                 onClick={() => openNewFileInput(node.path)}
@@ -1557,7 +1560,7 @@ export default function Sidebar({
         </div>
 
         {isCreatingChildFolder && (
-          <div className="px-3 pb-2" style={{ paddingLeft: `${28 + depth * 14}px` }}>
+          <div id={domId('sidebar-div-016', folderIdSuffix)} className="px-3 pb-2" style={{ paddingLeft: `${28 + depth * 14}px` }}>
             <input
               type="text"
               value={newFolderValue}
@@ -1574,7 +1577,7 @@ export default function Sidebar({
         )}
 
         {!collapsed && (
-          <div>
+          <div id={domId('sidebar-div-017', folderIdSuffix)}>
             {node.folders.map((child) => renderFolderNode(child, depth + 1))}
             {node.files.map(renderFileRow)}
           </div>
@@ -1585,9 +1588,9 @@ export default function Sidebar({
 
   return (
     <aside className="flex flex-col h-full bg-gray-900 text-gray-100 w-80 shrink-0 border-r border-gray-800">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
+      <div id="sidebar-div-018" className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
         <span className="text-sm font-semibold text-gray-300 uppercase tracking-wider">Files</span>
-        <div className="flex items-center gap-2">
+        <div id="sidebar-div-019" className="flex items-center gap-2">
           <button
             onClick={() => {
               if (selectionMode) {
@@ -1613,7 +1616,7 @@ export default function Sidebar({
           >
             {isRefreshing ? 'Refreshing...' : 'Refresh'}
           </button>
-          <div className="relative">
+          <div id="sidebar-div-020" className="relative">
             <button
               onClick={() => {
                 setAddMenuOpen((open) => !open);
@@ -1626,7 +1629,7 @@ export default function Sidebar({
               Add
             </button>
             {addMenuOpen && (
-              <div className="absolute right-0 top-9 z-30 w-52 rounded border border-gray-700 bg-gray-900 p-1 shadow-xl">
+              <div id="sidebar-div-021" className="absolute right-0 top-9 z-30 w-52 rounded border border-gray-700 bg-gray-900 p-1 shadow-xl">
                 <button
                   onClick={() => openNewFileInput(null)}
                   className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800"
@@ -1655,7 +1658,7 @@ export default function Sidebar({
                   <span className="text-[10px] text-gray-500">{uploadPopoverOpen ? 'Hide' : 'Show'}</span>
                 </button>
                 {uploadPopoverOpen && (
-                  <div className="mt-1 space-y-1 rounded border border-gray-800 bg-gray-950/60 p-1">
+                  <div id="sidebar-div-022" className="mt-1 space-y-1 rounded border border-gray-800 bg-gray-950/60 p-1">
                     <button
                       onClick={() => fileInputRef.current?.click()}
                       className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-200 hover:bg-gray-800"
@@ -1710,7 +1713,7 @@ export default function Sidebar({
         </div>
       </div>
 
-      <div className="border-b border-gray-800 px-3 py-2">
+      <div id="sidebar-div-023" className="border-b border-gray-800 px-3 py-2">
         <button
           type="button"
           onClick={() => setFiltersOpen((open) => !open)}
@@ -1721,10 +1724,10 @@ export default function Sidebar({
         </button>
 
         {filtersOpen && (
-          <div className="mt-2 space-y-3 rounded border border-gray-800 bg-gray-950/40 p-3">
-            <div className="space-y-2">
-              <div className="text-[11px] uppercase tracking-wide text-gray-500">Quick filters</div>
-              <div className="flex flex-wrap items-center gap-1.5">
+          <div id="sidebar-div-024" className="mt-2 space-y-3 rounded border border-gray-800 bg-gray-950/40 p-3">
+            <div id="sidebar-div-025" className="space-y-2">
+              <div id="sidebar-div-026" className="text-[11px] uppercase tracking-wide text-gray-500">Quick filters</div>
+              <div id="sidebar-div-027" className="flex flex-wrap items-center gap-1.5">
                 <button
                   type="button"
                   onClick={() => applyFilter({ chapterSearch: '', metaSearch: 'needs review', dateFrom: '', dateTo: '' })}
@@ -1753,11 +1756,11 @@ export default function Sidebar({
             </div>
 
             {savedFilters.length > 0 && (
-              <div className="space-y-2">
-                <div className="text-[11px] uppercase tracking-wide text-gray-500">Saved filters</div>
-                <div className="flex flex-wrap gap-1.5">
+              <div id="sidebar-div-028" className="space-y-2">
+                <div id="sidebar-div-029" className="text-[11px] uppercase tracking-wide text-gray-500">Saved filters</div>
+                <div id="sidebar-div-030" className="flex flex-wrap gap-1.5">
                   {savedFilters.map((filter) => (
-                    <div key={filter.id} className="inline-flex items-center rounded border border-gray-600 overflow-hidden">
+                    <div id={domId('sidebar-div-031', domIdSuffix(filter, filter))} key={filter.id} className="inline-flex items-center rounded border border-gray-600 overflow-hidden">
                       <button
                         type="button"
                         onClick={() => applyFilter(filter)}
@@ -1779,8 +1782,8 @@ export default function Sidebar({
               </div>
             )}
 
-            <div className="space-y-2">
-              <div className="text-[11px] uppercase tracking-wide text-gray-500">Search and advanced filters</div>
+            <div id="sidebar-div-032" className="space-y-2">
+              <div id="sidebar-div-033" className="text-[11px] uppercase tracking-wide text-gray-500">Search and advanced filters</div>
               <input
                 type="text"
                 value={globalQuery}
@@ -1789,7 +1792,7 @@ export default function Sidebar({
                 className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
               />
               {globalQuery.trim() && (
-                <div className="grid grid-cols-2 gap-2">
+                <div id="sidebar-div-034" className="grid grid-cols-2 gap-2">
                   <select
                     value={facetDocument}
                     onChange={(e) => setFacetDocument(e.target.value)}
@@ -1843,7 +1846,7 @@ export default function Sidebar({
                 placeholder="Filter by chapter name"
                 className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
               />
-              <div className="grid grid-cols-2 gap-2">
+              <div id="sidebar-div-035" className="grid grid-cols-2 gap-2">
                 <input
                   type="date"
                   value={dateFrom}
@@ -1867,7 +1870,7 @@ export default function Sidebar({
                 className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
               />
               {selectedFile && headingOptions.length > 0 && (
-                <div className="flex gap-2">
+                <div id="sidebar-div-036" className="flex gap-2">
                   <select
                     value={selectedHeading}
                     onChange={(e) => setSelectedHeading(e.target.value)}
@@ -1898,21 +1901,21 @@ export default function Sidebar({
       </div>
 
       {error && (
-        <div className="mx-3 mt-2 px-3 py-2 bg-red-900/50 border border-red-700 rounded text-xs text-red-300">
+        <div id="sidebar-div-037" className="mx-3 mt-2 px-3 py-2 bg-red-900/50 border border-red-700 rounded text-xs text-red-300">
           {error}
         </div>
       )}
 
       {wizardLoading && (
-        <div className="mx-3 mt-2 px-3 py-2 bg-blue-950/50 border border-blue-800 rounded text-xs text-blue-300">
+        <div id="sidebar-div-038" className="mx-3 mt-2 px-3 py-2 bg-blue-950/50 border border-blue-800 rounded text-xs text-blue-300">
           Preparing import…
         </div>
       )}
 
       {importWizard && (
-        <div className="mx-3 mt-2 p-3 border border-blue-700/70 bg-blue-950/30 rounded text-xs space-y-2">
-          <div className="font-semibold text-blue-200">Import wizard</div>
-          <div className="text-blue-100/90">
+        <div id="sidebar-div-039" className="mx-3 mt-2 p-3 border border-blue-700/70 bg-blue-950/30 rounded text-xs space-y-2">
+          <div id="sidebar-div-040" className="font-semibold text-blue-200">Import wizard</div>
+          <div id="sidebar-div-041" className="text-blue-100/90">
             {importWizard.candidates.length} file(s) detected. Structure inferred from paths before import.
           </div>
           <input
@@ -1922,23 +1925,23 @@ export default function Sidebar({
             placeholder="chapter-{n}-r{rev}.md"
             className="w-full bg-gray-800 text-gray-100 text-xs px-2 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
           />
-          <div className="text-[11px] text-blue-200/80">
+          <div id="sidebar-div-042" className="text-[11px] text-blue-200/80">
             Template tokens: {'{n}'}, {'{rev}'}, {'{basename}'}, {'{document}'}, {'{chapter}'}
           </div>
-          <div className="max-h-24 overflow-y-auto text-[11px] text-gray-300 border border-gray-800 rounded p-2 bg-gray-900/50">
+          <div id="sidebar-div-043" className="max-h-24 overflow-y-auto text-[11px] text-gray-300 border border-gray-800 rounded p-2 bg-gray-900/50">
             {importWizard.candidates.slice(0, 8).map((candidate, index) => (
-              <div key={`${candidate.originalPath}-${index}`} className="truncate">
+              <div id={domId('sidebar-div-044', domIdSuffix(candidate, index))} key={`${candidate.originalPath}-${index}`} className="truncate">
                 {candidate.originalPath} → {applyRenameTemplate(importTemplate, index, candidate.name, candidate.inferredDocument, candidate.inferredChapter)}
               </div>
             ))}
             {importWizard.candidates.length > 8 && (
-              <div className="text-gray-400 mt-1">…and {importWizard.candidates.length - 8} more</div>
+              <div id="sidebar-div-045" className="text-gray-400 mt-1">…and {importWizard.candidates.length - 8} more</div>
             )}
           </div>
-          <div className="text-[11px] text-amber-200/90">
+          <div id="sidebar-div-046" className="text-[11px] text-amber-200/90">
             Duplicate groups in batch (by content hash): {Object.values(importWizard.duplicateByHash).filter((group) => group.length > 1).length}
           </div>
-          <div className="flex gap-2">
+          <div id="sidebar-div-047" className="flex gap-2">
             <button
               onClick={confirmImportFromWizard}
               className="text-xs px-2 py-1 bg-blue-600 hover:bg-blue-500 rounded transition-colors"
@@ -1956,9 +1959,9 @@ export default function Sidebar({
       )}
 
       {showNewInput && (
-        <div className="px-3 py-2 border-b border-gray-700">
+        <div id="sidebar-div-048" className="px-3 py-2 border-b border-gray-700">
           {clipboardContent !== null && (
-            <div className="flex items-center gap-1 text-xs text-blue-400 mb-1.5">
+            <div id="sidebar-div-049" className="flex items-center gap-1 text-xs text-blue-400 mb-1.5">
               <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
               </svg>
@@ -1977,7 +1980,7 @@ export default function Sidebar({
             className="w-full bg-gray-800 text-gray-100 text-sm px-2 py-1 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
             autoFocus
           />
-          <div className="flex gap-2 mt-1">
+          <div id="sidebar-div-050" className="flex gap-2 mt-1">
             <button
               onClick={handleCreate}
               className="text-xs px-2 py-1 bg-blue-600 hover:bg-blue-500 rounded transition-colors"
@@ -1995,7 +1998,7 @@ export default function Sidebar({
       )}
 
       {creatingFolderParent !== null && creatingFolderParent === ROOT_FOLDER_SENTINEL && (
-        <div className="px-3 py-2 border-b border-gray-700">
+        <div id="sidebar-div-051" className="px-3 py-2 border-b border-gray-700">
           <input
             type="text"
             value={newFolderValue}
@@ -2008,7 +2011,7 @@ export default function Sidebar({
             className="w-full bg-gray-800 text-gray-100 text-sm px-2 py-1 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
             autoFocus
           />
-          <div className="flex gap-2 mt-1">
+          <div id="sidebar-div-052" className="flex gap-2 mt-1">
             <button
               onClick={() => void handleCreateFolder()}
               className="text-xs px-2 py-1 bg-blue-600 hover:bg-blue-500 rounded transition-colors"
@@ -2025,10 +2028,10 @@ export default function Sidebar({
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto">
+      <div id="sidebar-div-053" className="flex-1 overflow-y-auto">
         {globalQuery.trim() && (
-          <div className="border-b border-gray-700/60">
-            <div className="px-3 py-2 text-[11px] text-gray-400">
+          <div id="sidebar-div-054" className="border-b border-gray-700/60">
+            <div id="sidebar-div-055" className="px-3 py-2 text-[11px] text-gray-400">
               {rankedResults.length} result{rankedResults.length === 1 ? '' : 's'}
             </div>
             {rankedResults.map((result) => (
@@ -2037,39 +2040,39 @@ export default function Sidebar({
                 onClick={() => onFileSelect(result.entry.file.name)}
                 className="w-full text-left px-3 py-2 border-t border-gray-800 hover:bg-gray-800/70 transition-colors"
               >
-                <div className="flex items-center gap-2 text-xs">
+                <div id={domId('sidebar-div-056', domIdSuffix(result, result))} className="flex items-center gap-2 text-xs">
                   <span className="font-semibold text-gray-200 truncate">{result.entry.file.name}</span>
                   <span className="text-[10px] text-gray-500 uppercase">{result.entry.sourceType}</span>
                   <span className="ml-auto text-[10px] text-gray-500">{formatDate(result.entry.createdAtIso)}</span>
                 </div>
-                <div className="text-[11px] text-gray-400 truncate mt-0.5">
+                <div id={domId('sidebar-div-057', domIdSuffix(result, result))} className="text-[11px] text-gray-400 truncate mt-0.5">
                   {result.entry.document} / {result.entry.chapter}
                 </div>
-                <div className="text-[11px] text-gray-300 mt-1 leading-relaxed">
+                <div id={domId('sidebar-div-058', domIdSuffix(result, result))} className="text-[11px] text-gray-300 mt-1 leading-relaxed">
                   {renderHighlightedText(result.snippet, globalQuery.trim())}
                 </div>
               </button>
             ))}
             {rankedResults.length === 0 && (
-              <div className="px-3 py-3 text-xs text-gray-500">No search matches</div>
+              <div id="sidebar-div-059" className="px-3 py-3 text-xs text-gray-500">No search matches</div>
             )}
           </div>
         )}
-        {isLoading && <div className="px-4 py-3 text-sm text-gray-500">Loading...</div>}
+        {isLoading && <div id="sidebar-div-060" className="px-4 py-3 text-sm text-gray-500">Loading...</div>}
         {!isLoading && tree.folders.length === 0 && tree.rootFiles.length === 0 && (
-          <div className="px-4 py-3 text-sm text-gray-500">No matching files</div>
+          <div id="sidebar-div-061" className="px-4 py-3 text-sm text-gray-500">No matching files</div>
         )}
 
         {tree.folders.map((folder) => renderFolderNode(folder))}
         {tree.rootFiles.length > 0 && (
-          <div className={tree.folders.length > 0 ? 'border-t border-gray-800/50' : ''}>
+          <div id="sidebar-div-062" className={tree.folders.length > 0 ? 'border-t border-gray-800/50' : ''}>
             {tree.rootFiles.map(renderFileRow)}
           </div>
         )}
       </div>
 
       {selectionMode && (
-        <div className="border-t border-gray-700 px-3 py-2 flex items-center gap-2 bg-gray-900">
+        <div id="sidebar-div-063" className="border-t border-gray-700 px-3 py-2 flex items-center gap-2 bg-gray-900">
           <span className="text-xs text-gray-400 flex-1">
             {selectedFiles.size} selected
           </span>

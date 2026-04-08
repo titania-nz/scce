@@ -3,6 +3,7 @@
 import { useState, FormEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense } from 'react';
+import { domId, domIdSuffix } from '@/lib/domId';
 
 function resolveSafeRedirectPath(from: string | null): string {
   if (!from || !from.startsWith('/')) return '/';
@@ -46,7 +47,7 @@ function LoginForm() {
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1">
+      <div id="login-page-div-001" className="flex flex-col gap-1">
         <label htmlFor="password" className="text-sm text-gray-400">
           Password
         </label>
@@ -78,8 +79,8 @@ function LoginForm() {
 // Main component export: this is the entry point rendered by parent routes/components.
 export default function LoginPage() {
   return (
-    <div className="flex h-full items-center justify-center bg-gray-900">
-      <div className="w-full max-w-sm rounded-lg bg-gray-800 p-8 shadow-xl">
+    <div id="login-page-div-002" className="flex h-full items-center justify-center bg-gray-900">
+      <div id="login-page-div-003" className="w-full max-w-sm rounded-lg bg-gray-800 p-8 shadow-xl">
         <h1 className="mb-6 text-xl font-semibold text-white">Sign in</h1>
         <Suspense>
           <LoginForm />

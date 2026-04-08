@@ -7,15 +7,25 @@ import PreviewPane from './PreviewPane';
 import Toolbar from './Toolbar';
 import CompareView from './CompareView';
 import DocumentDashboard from './DocumentDashboard';
+import PaneResizeHandle from './PaneResizeHandle';
 import { useFileContent } from '@/hooks/useFileContent';
 import { useAutoSave } from '@/hooks/useAutoSave';
 import { useDocuments } from '@/hooks/useDocuments';
+import { usePointerDrag } from '@/hooks/usePointerDrag';
 import type { ExportFormat, PublishHistoryEntry, PublishTargetProfile, Revision, RevisionInlineNote } from '@/types';
 import { RevisionStatus } from '@/types';
 import { useFiles } from '@/hooks/useFiles';
 import { buildFileApiPath, buildFilePublishApiPath } from '@/lib/fileApiPath';
 import { shouldResetSelectedFileAfter404 } from '@/lib/fileLoadRecovery';
+import {
+  clampPaneWidth,
+  clampSplitRatio,
+  getPersistablePaneWidth,
+  sanitizeStoredPaneWidth,
+  sanitizeStoredSplitRatio,
+} from '@/lib/paneLayout';
 import { REVISION_STATUSES } from '@/lib/revisionStatus';
+import { domId, domIdSuffix } from '@/lib/domId';
 
 // CodeMirror accesses browser APIs — must be dynamically imported with ssr:false
 const EditorPane = dynamic(() => import('./EditorPane'), { ssr: false });
@@ -166,8 +176,49 @@ const LOCAL_DRAFT_META_KEY = 'scce:working-draft-meta:v1';
 const LOCAL_QUEUE_KEY = 'scce:checkpoint-queue:v1';
 const DESKTOP_SIDEBAR_OPEN_KEY = 'scce:desktop-sidebar-open:v1';
 const DESKTOP_INSPECTOR_OPEN_KEY = 'scce:desktop-inspector-open:v1';
+const DESKTOP_PANE_LAYOUT_KEY = 'scce:desktop-pane-layout:v1';
 const MISSING_FILE_PROBE_ATTEMPTS = 4;
 const MISSING_FILE_PROBE_DELAY_MS = 250;
+const RESIZE_HANDLE_WIDTH = 12;
+const SIDEBAR_WIDTH_BOUNDS = { min: 240, max: 480 };
+const INSPECTOR_WIDTH_BOUNDS = { min: 280, max: 520 };
+const EDITOR_MIN_PANE_WIDTH = 320;
+const EDITOR_CENTER_MIN_WIDTH = EDITOR_MIN_PANE_WIDTH * 2 + RESIZE_HANDLE_WIDTH;
+const DEFAULT_DESKTOP_PANE_LAYOUT = {
+  sidebarWidth: 320,
+  previewRatio: 0.5,
+  inspectorWidth: 320,
+};
+
+interface DesktopPaneLayout {
+  sidebarWidth: number;
+  previewRatio: number;
+  inspectorWidth: number;
+}
+
+interface EditorResizeDragMeta {
+  handle: 'sidebar' | 'preview' | 'inspector';
+  startSidebarWidth: number;
+  startPreviewWidth: number;
+  startInspectorWidth: number;
+  splitWidth: number;
+}
+
+function getSidebarWidthBounds(workspaceWidth: number, inspectorWidth: number): { min: number; max: number } {
+  const max = Math.min(
+    SIDEBAR_WIDTH_BOUNDS.max,
+    Math.max(SIDEBAR_WIDTH_BOUNDS.min, workspaceWidth - inspectorWidth - EDITOR_CENTER_MIN_WIDTH - RESIZE_HANDLE_WIDTH),
+  );
+  return { min: SIDEBAR_WIDTH_BOUNDS.min, max };
+}
+
+function getInspectorWidthBounds(workspaceWidth: number, sidebarWidth: number): { min: number; max: number } {
+  const max = Math.min(
+    INSPECTOR_WIDTH_BOUNDS.max,
+    Math.max(INSPECTOR_WIDTH_BOUNDS.min, workspaceWidth - sidebarWidth - EDITOR_CENTER_MIN_WIDTH - RESIZE_HANDLE_WIDTH),
+  );
+  return { min: INSPECTOR_WIDTH_BOUNDS.min, max };
+}
 
 interface DraftMeta {
   note: string;
@@ -206,6 +257,8 @@ function writeLocalJson<T>(storageKey: string, value: T): void {
 // Main component export: this is the entry point rendered by parent routes/components.
 export default function EditorPage() {
   const { files, createFile, renameFile, mutate: mutateFiles } = useFiles();
+  const workspaceRef = useRef<HTMLDivElement>(null);
+  const editorSplitRef = useRef<HTMLDivElement>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [content, setContent] = useState('');
   const [isDirty, setIsDirty] = useState(false);
@@ -214,8 +267,12 @@ export default function EditorPage() {
   const [desktopSidebarOpen, setDesktopSidebarOpen] = useState(true);
   const [desktopInspectorOpen, setDesktopInspectorOpen] = useState(true);
   const [isDesktopViewport, setIsDesktopViewport] = useState(false);
+  const [isLargeDesktopViewport, setIsLargeDesktopViewport] = useState(false);
   const [workspaceMode, setWorkspaceMode] = useState<'editor' | 'compare' | 'documents'>('editor');
   const [inspectorTab, setInspectorTab] = useState<'checkpoint' | 'timeline' | 'publish' | 'links'>('checkpoint');
+  const [desktopPaneLayout, setDesktopPaneLayout] = useState<DesktopPaneLayout>(DEFAULT_DESKTOP_PANE_LAYOUT);
+  const [workspaceWidth, setWorkspaceWidth] = useState(0);
+  const [editorSplitWidth, setEditorSplitWidth] = useState(0);
   const [utilitiesOpen, setUtilitiesOpen] = useState(false);
   const [revisionNote, setRevisionNote] = useState('');
   const [tagsInput, setTagsInput] = useState('');
@@ -293,6 +350,26 @@ export default function EditorPage() {
   );
   const isSidebarVisible = isDesktopViewport ? desktopSidebarOpen : sidebarOpen;
   const isInspectorVisible = desktopInspectorOpen && workspaceMode === 'editor';
+  const isInspectorPanelVisible = isInspectorVisible && isLargeDesktopViewport;
+  const sidebarWidthBounds = useMemo(
+    () => getSidebarWidthBounds(workspaceWidth, isInspectorPanelVisible ? desktopPaneLayout.inspectorWidth + RESIZE_HANDLE_WIDTH : 0),
+    [desktopPaneLayout.inspectorWidth, isInspectorPanelVisible, workspaceWidth],
+  );
+  const inspectorWidthBounds = useMemo(
+    () => getInspectorWidthBounds(workspaceWidth, isDesktopViewport && desktopSidebarOpen ? desktopPaneLayout.sidebarWidth + RESIZE_HANDLE_WIDTH : 0),
+    [desktopPaneLayout.sidebarWidth, desktopSidebarOpen, isDesktopViewport, workspaceWidth],
+  );
+  const clampedPreviewRatio = useMemo(
+    () => clampSplitRatio(desktopPaneLayout.previewRatio, Math.max(0, editorSplitWidth - RESIZE_HANDLE_WIDTH), EDITOR_MIN_PANE_WIDTH),
+    [desktopPaneLayout.previewRatio, editorSplitWidth],
+  );
+  const desktopEditorPreviewWidth = Math.max(0, editorSplitWidth - RESIZE_HANDLE_WIDTH);
+  const previewPaneWidth = isDesktopViewport && desktopEditorPreviewWidth > 0
+    ? Math.round(desktopEditorPreviewWidth * clampedPreviewRatio)
+    : null;
+  const editorPaneWidth = isDesktopViewport && previewPaneWidth !== null
+    ? Math.max(0, desktopEditorPreviewWidth - previewPaneWidth)
+    : null;
   const missingRequiredFields = useMemo(() => {
     const missing: string[] = [];
     if (requiredFields.note && revisionNote.trim().length === 0) missing.push('Note');
@@ -403,17 +480,88 @@ export default function EditorPage() {
   }, [desktopInspectorOpen]);
 
   useEffect(() => {
+    const stored = readLocalJson<Partial<DesktopPaneLayout>>(DESKTOP_PANE_LAYOUT_KEY, DEFAULT_DESKTOP_PANE_LAYOUT);
+    setDesktopPaneLayout({
+      sidebarWidth: sanitizeStoredPaneWidth(stored.sidebarWidth, DEFAULT_DESKTOP_PANE_LAYOUT.sidebarWidth, SIDEBAR_WIDTH_BOUNDS),
+      previewRatio: sanitizeStoredSplitRatio(stored.previewRatio, DEFAULT_DESKTOP_PANE_LAYOUT.previewRatio),
+      inspectorWidth: sanitizeStoredPaneWidth(stored.inspectorWidth, DEFAULT_DESKTOP_PANE_LAYOUT.inspectorWidth, INSPECTOR_WIDTH_BOUNDS),
+    });
+  }, []);
+
+  useEffect(() => {
+    writeLocalJson(DESKTOP_PANE_LAYOUT_KEY, {
+      sidebarWidth: getPersistablePaneWidth(desktopSidebarOpen, desktopPaneLayout.sidebarWidth, SIDEBAR_WIDTH_BOUNDS)
+        ?? desktopPaneLayout.sidebarWidth,
+      previewRatio: desktopPaneLayout.previewRatio,
+      inspectorWidth: getPersistablePaneWidth(isInspectorVisible, desktopPaneLayout.inspectorWidth, INSPECTOR_WIDTH_BOUNDS)
+        ?? desktopPaneLayout.inspectorWidth,
+    });
+  }, [desktopInspectorOpen, desktopPaneLayout, desktopSidebarOpen, isInspectorVisible]);
+
+  useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    const mediaQuery = window.matchMedia('(min-width: 768px)');
-    const syncViewport = (event?: MediaQueryList | MediaQueryListEvent) => {
-      setIsDesktopViewport(event?.matches ?? mediaQuery.matches);
+    const desktopQuery = window.matchMedia('(min-width: 768px)');
+    const largeDesktopQuery = window.matchMedia('(min-width: 1024px)');
+    const syncViewport = () => {
+      setIsDesktopViewport(desktopQuery.matches);
+      setIsLargeDesktopViewport(largeDesktopQuery.matches);
     };
 
-    syncViewport(mediaQuery);
-    mediaQuery.addEventListener('change', syncViewport);
-    return () => mediaQuery.removeEventListener('change', syncViewport);
+    syncViewport();
+    desktopQuery.addEventListener('change', syncViewport);
+    largeDesktopQuery.addEventListener('change', syncViewport);
+    return () => {
+      desktopQuery.removeEventListener('change', syncViewport);
+      largeDesktopQuery.removeEventListener('change', syncViewport);
+    };
   }, []);
+
+  useEffect(() => {
+    if (typeof ResizeObserver === 'undefined') return;
+
+    const workspaceNode = workspaceRef.current;
+    const splitNode = editorSplitRef.current;
+    if (!workspaceNode && !splitNode) return;
+
+    const observer = new ResizeObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.target === workspaceNode) {
+          setWorkspaceWidth(entry.contentRect.width);
+        }
+        if (entry.target === splitNode) {
+          setEditorSplitWidth(entry.contentRect.width);
+        }
+      });
+    });
+
+    if (workspaceNode) observer.observe(workspaceNode);
+    if (splitNode) observer.observe(splitNode);
+
+    return () => observer.disconnect();
+  }, [isDesktopViewport, isInspectorPanelVisible, workspaceMode]);
+
+  useEffect(() => {
+    if (!isDesktopViewport) return;
+
+    setDesktopPaneLayout((prev) => {
+      const next = {
+        sidebarWidth: clampPaneWidth(prev.sidebarWidth, sidebarWidthBounds),
+        previewRatio: clampSplitRatio(prev.previewRatio, Math.max(0, editorSplitWidth - RESIZE_HANDLE_WIDTH), EDITOR_MIN_PANE_WIDTH),
+        inspectorWidth: clampPaneWidth(prev.inspectorWidth, inspectorWidthBounds),
+      };
+
+      if (
+        next.sidebarWidth === prev.sidebarWidth &&
+        next.previewRatio === prev.previewRatio &&
+        next.inspectorWidth === prev.inspectorWidth
+      ) {
+        return prev;
+      }
+
+      return next;
+    });
+  }, [editorSplitWidth, inspectorWidthBounds, isDesktopViewport, sidebarWidthBounds]);
 
   useEffect(() => {
     if (!commandPaletteOpen) return;
@@ -1335,8 +1483,36 @@ export default function EditorPage() {
     renameCurrentFile,
   ]);
 
+  const startEditorPaneResize = usePointerDrag<EditorResizeDragMeta>({
+    onDragMove: (meta, position) => {
+      if (!isDesktopViewport) return;
+
+      if (meta.handle === 'sidebar') {
+        const nextWidth = clampPaneWidth(meta.startSidebarWidth + position.deltaX, sidebarWidthBounds);
+        setDesktopPaneLayout((prev) => ({ ...prev, sidebarWidth: nextWidth }));
+        return;
+      }
+
+      if (meta.handle === 'inspector') {
+        const nextWidth = clampPaneWidth(meta.startInspectorWidth - position.deltaX, inspectorWidthBounds);
+        setDesktopPaneLayout((prev) => ({ ...prev, inspectorWidth: nextWidth }));
+        return;
+      }
+
+      const availableWidth = Math.max(0, meta.splitWidth - RESIZE_HANDLE_WIDTH);
+      if (availableWidth <= 0) return;
+
+      const nextPreviewWidth = Math.min(
+        availableWidth - EDITOR_MIN_PANE_WIDTH,
+        Math.max(EDITOR_MIN_PANE_WIDTH, meta.startPreviewWidth - position.deltaX),
+      );
+      const nextRatio = clampSplitRatio(nextPreviewWidth / availableWidth, availableWidth, EDITOR_MIN_PANE_WIDTH);
+      setDesktopPaneLayout((prev) => ({ ...prev, previewRatio: nextRatio }));
+    },
+  });
+
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-950 text-gray-100">
+    <div id="editor-page-div-001" ref={workspaceRef} className="flex h-screen overflow-hidden bg-gray-950 text-gray-100">
       {sidebarOpen && (
         <div
           className="md:hidden fixed inset-0 z-10 bg-black/50"
@@ -1344,20 +1520,23 @@ export default function EditorPage() {
         />
       )}
 
-      <div
+      <div id="editor-page-div-002"
         className={`
           fixed inset-y-0 left-0 z-20 overflow-hidden
           transition-[width] duration-200 ease-in-out
           md:static md:shrink-0
           ${desktopSidebarOpen ? 'md:w-80' : 'md:w-0'}
         `}
+        data-testid="editor-sidebar-pane"
+        style={isDesktopViewport ? { width: desktopSidebarOpen ? desktopPaneLayout.sidebarWidth : 0 } : undefined}
       >
-        <div
+        <div id="editor-page-div-003"
           className={`
             h-full w-80 transform transition-transform duration-200 ease-in-out
             ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
             ${desktopSidebarOpen ? 'md:translate-x-0' : 'md:-translate-x-full'}
           `}
+          style={isDesktopViewport ? { width: desktopPaneLayout.sidebarWidth } : undefined}
         >
           <Sidebar
             selectedFile={selectedFile}
@@ -1370,7 +1549,27 @@ export default function EditorPage() {
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      {isDesktopViewport && desktopSidebarOpen && (
+        <PaneResizeHandle
+          ariaLabel="Resize sidebar"
+          dataTestId="editor-sidebar-resizer"
+          className="hidden md:flex"
+          onPointerDown={(event) =>
+            startEditorPaneResize(event, {
+              handle: 'sidebar',
+              startSidebarWidth: desktopPaneLayout.sidebarWidth,
+              startPreviewWidth: previewPaneWidth ?? 0,
+              startInspectorWidth: desktopPaneLayout.inspectorWidth,
+              splitWidth: editorSplitWidth,
+            })
+          }
+          onDoubleClick={() =>
+            setDesktopPaneLayout((prev) => ({ ...prev, sidebarWidth: DEFAULT_DESKTOP_PANE_LAYOUT.sidebarWidth }))
+          }
+        />
+      )}
+
+      <div id="editor-page-div-004" className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <Toolbar
           filename={selectedFile}
           isDirty={isDirty}
@@ -1413,12 +1612,12 @@ export default function EditorPage() {
         />
 
         {opsError && (
-          <div className="mx-3 mt-2 px-3 py-2 rounded border border-red-700 bg-red-950/40 text-xs text-red-200">
+          <div id="editor-page-div-005" className="mx-3 mt-2 px-3 py-2 rounded border border-red-700 bg-red-950/40 text-xs text-red-200">
             {opsError}
           </div>
         )}
         {isExporting && (
-          <div className="mx-3 mt-2 px-3 py-2 rounded border border-blue-700 bg-blue-950/40 text-xs text-blue-200">
+          <div id="editor-page-div-006" className="mx-3 mt-2 px-3 py-2 rounded border border-blue-700 bg-blue-950/40 text-xs text-blue-200">
             Building backup export…
           </div>
         )}
@@ -1442,7 +1641,7 @@ export default function EditorPage() {
             onFileSelect={setSelectedFile}
           />
         ) : !selectedFile ? (
-          <div className="flex-1 flex flex-col items-center justify-center text-gray-500 gap-3">
+          <div id="editor-page-div-007" className="flex-1 flex flex-col items-center justify-center text-gray-500 gap-3">
             <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
@@ -1450,27 +1649,77 @@ export default function EditorPage() {
             <p className="text-xs text-gray-600">You can also upload or drag files in when no file is selected.</p>
           </div>
         ) : isLoading ? (
-          <div className="flex-1 flex items-center justify-center text-gray-500 text-sm">
+          <div id="editor-page-div-008" className="flex-1 flex items-center justify-center text-gray-500 text-sm">
             Loading...
           </div>
         ) : (
-          <div className="flex-1 flex overflow-hidden">
-            <div className="flex-1 flex overflow-hidden">
-              <div className={`flex-1 flex overflow-hidden ${mobileView === 'preview' ? 'hidden md:flex' : 'flex'}`}>
+          <div id="editor-page-div-009" className="flex-1 flex overflow-hidden">
+            <div id="editor-page-div-010" ref={editorSplitRef} className="flex-1 flex overflow-hidden min-w-0">
+              <div id="editor-page-div-011"
+                data-testid="editor-pane"
+                className={`flex overflow-hidden ${mobileView === 'preview' ? 'hidden md:flex' : 'flex'}`}
+                style={isDesktopViewport && editorPaneWidth !== null ? { width: editorPaneWidth } : undefined}
+              >
                 <EditorPane value={content} onChange={handleContentChange} readOnly={Boolean(isLockedRevision)} />
               </div>
 
-              <div className="hidden md:block w-px bg-gray-700 shrink-0" />
+              {isDesktopViewport ? (
+                <PaneResizeHandle
+                  ariaLabel="Resize editor and preview panes"
+                  dataTestId="editor-preview-resizer"
+                  className="hidden md:flex"
+                  onPointerDown={(event) =>
+                    startEditorPaneResize(event, {
+                      handle: 'preview',
+                      startSidebarWidth: desktopPaneLayout.sidebarWidth,
+                      startPreviewWidth: previewPaneWidth ?? 0,
+                      startInspectorWidth: desktopPaneLayout.inspectorWidth,
+                      splitWidth: editorSplitWidth,
+                    })
+                  }
+                  onDoubleClick={() =>
+                    setDesktopPaneLayout((prev) => ({ ...prev, previewRatio: DEFAULT_DESKTOP_PANE_LAYOUT.previewRatio }))
+                  }
+                />
+              ) : (
+                <div className="hidden md:block w-px bg-gray-700 shrink-0" />
+              )}
 
-              <div className={`flex-1 flex overflow-hidden ${mobileView === 'edit' ? 'hidden md:flex' : 'flex'}`}>
+              <div id="editor-page-div-012"
+                data-testid="preview-pane"
+                className={`flex overflow-hidden ${mobileView === 'edit' ? 'hidden md:flex' : 'flex'}`}
+                style={isDesktopViewport && previewPaneWidth !== null ? { width: previewPaneWidth } : undefined}
+              >
                 <PreviewPane content={content} jumpToHeadingToken={jumpToHeadingToken} />
               </div>
             </div>
 
-            {isInspectorVisible && (
-              <aside className="hidden lg:flex w-80 border-l border-gray-700 bg-gray-900/70 flex-col overflow-hidden">
-              <div className="border-b border-gray-700 p-2">
-                <div className="mb-2 flex items-center justify-between gap-2">
+            {isInspectorPanelVisible && (
+              <>
+                <PaneResizeHandle
+                  ariaLabel="Resize inspector"
+                  dataTestId="editor-inspector-resizer"
+                  className="hidden lg:flex"
+                  onPointerDown={(event) =>
+                    startEditorPaneResize(event, {
+                      handle: 'inspector',
+                      startSidebarWidth: desktopPaneLayout.sidebarWidth,
+                      startPreviewWidth: previewPaneWidth ?? 0,
+                      startInspectorWidth: desktopPaneLayout.inspectorWidth,
+                      splitWidth: editorSplitWidth,
+                    })
+                  }
+                  onDoubleClick={() =>
+                    setDesktopPaneLayout((prev) => ({ ...prev, inspectorWidth: DEFAULT_DESKTOP_PANE_LAYOUT.inspectorWidth }))
+                  }
+                />
+                <aside
+                  className="hidden lg:flex border-l border-gray-700 bg-gray-900/70 flex-col overflow-hidden"
+                  style={{ width: desktopPaneLayout.inspectorWidth }}
+                  data-testid="editor-inspector-pane"
+                >
+              <div id="editor-page-div-013" className="border-b border-gray-700 p-2">
+                <div id="editor-page-div-014" className="mb-2 flex items-center justify-between gap-2">
                   <span className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Inspector</span>
                   <button
                     type="button"
@@ -1482,7 +1731,7 @@ export default function EditorPage() {
                     Close
                   </button>
                 </div>
-                <div className="grid grid-cols-4 gap-1">
+                <div id="editor-page-div-015" className="grid grid-cols-4 gap-1">
                   {([
                     ['checkpoint', 'Checkpoint'],
                     ['timeline', 'Timeline'],
@@ -1502,11 +1751,11 @@ export default function EditorPage() {
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-3 space-y-3">
+              <div id="editor-page-div-016" className="flex-1 overflow-y-auto p-3 space-y-3">
                 {inspectorTab === 'checkpoint' && (
                   <>
                     {isLockedRevision && latestRevision && (
-                      <div className="rounded border border-amber-700 bg-amber-950/30 p-3 text-xs text-amber-100 space-y-2">
+                      <div id="editor-page-div-017" className="rounded border border-amber-700 bg-amber-950/30 p-3 text-xs text-amber-100 space-y-2">
                         <p>This file is locked at revision {latestRevision.id}. Keep it intact unless you intentionally branch a new version.</p>
                         <button
                           onClick={() => void handleUnlockAndCreateVersion()}
@@ -1517,7 +1766,7 @@ export default function EditorPage() {
                       </div>
                     )}
 
-                    <div className="space-y-3">
+                    <div id="editor-page-div-018" className="space-y-3">
                       <label className="block text-xs text-gray-300">
                         Note
                         <textarea
@@ -1607,7 +1856,7 @@ export default function EditorPage() {
                         <summary className="cursor-pointer text-[11px] uppercase tracking-wide text-gray-400">Workflow settings</summary>
                         <fieldset className="mt-2">
                           <legend className="text-[11px] text-gray-500">Required before checkpoint</legend>
-                          <div className="mt-2 space-y-1.5 text-xs text-gray-200">
+                          <div id="editor-page-div-019" className="mt-2 space-y-1.5 text-xs text-gray-200">
                             <label className="flex items-center gap-2">
                               <input type="checkbox" checked={requiredFields.note} onChange={(e) => setRequiredFields((prev) => ({ ...prev, note: e.target.checked }))} />
                               Note
@@ -1635,7 +1884,7 @@ export default function EditorPage() {
 
                 {inspectorTab === 'timeline' && (
                   <>
-                    <div className="text-[11px] text-gray-400">
+                    <div id="editor-page-div-020" className="text-[11px] text-gray-400">
                       {selectedRevisionIds.length === 2 ? 'Two revisions selected. Open Compare to review the differences.' : 'Select up to two revisions to inspect and compare.'}
                     </div>
                     {revisions.length === 0 ? (
@@ -1658,7 +1907,7 @@ export default function EditorPage() {
                         >
                           <p className="text-[11px] text-gray-500">{new Date(revision.createdAt).toLocaleString()}</p>
                           <p className="mt-1 text-xs text-gray-200 line-clamp-3">{revision.note || 'No note'}</p>
-                          <div className="mt-1 flex flex-wrap gap-1">
+                          <div id={domId('editor-page-div-021', domIdSuffix(revision, revision))} className="mt-1 flex flex-wrap gap-1">
                             {revision.status && (
                               <span className={`text-[10px] px-1.5 py-0.5 rounded ${
                                 revision.status === 'Locked' ? 'bg-amber-900 text-amber-200' : revision.status === 'Editing' ? 'bg-blue-900 text-blue-200' : 'bg-emerald-900 text-emerald-200'
@@ -1681,7 +1930,7 @@ export default function EditorPage() {
 
                 {inspectorTab === 'publish' && (
                   <>
-                    <div className="grid grid-cols-3 gap-1.5">
+                    <div id="editor-page-div-022" className="grid grid-cols-3 gap-1.5">
                       <button onClick={() => handleExport('html')} className="rounded bg-gray-800 hover:bg-gray-700 px-2 py-1 text-[11px] text-gray-200">Export HTML</button>
                       <button onClick={() => handleExport('pdf')} className="rounded bg-gray-800 hover:bg-gray-700 px-2 py-1 text-[11px] text-gray-200">Export PDF</button>
                       <button onClick={() => handleExport('docx')} className="rounded bg-gray-800 hover:bg-gray-700 px-2 py-1 text-[11px] text-gray-200">Export DOCX</button>
@@ -1714,12 +1963,12 @@ export default function EditorPage() {
                     <p className="text-[11px] text-gray-400">Latest status: <span className="text-gray-200">{latestRevisionStatus || 'none'}</span></p>
                     {publishMessage && <p className="text-[11px] text-blue-300">{publishMessage}</p>}
                     {publishHistory.length > 0 && (
-                      <div className="space-y-2 border-t border-gray-700 pt-3">
+                      <div id="editor-page-div-023" className="space-y-2 border-t border-gray-700 pt-3">
                         <h3 className="text-[11px] uppercase tracking-wide text-gray-400">Recent publish history</h3>
                         {publishHistory.slice(0, 5).map((entry) => (
-                          <div key={entry.id} className="rounded border border-gray-700 bg-gray-900 p-2 text-[11px] text-gray-300">
-                            <div>{entry.outcome}</div>
-                            <div className="mt-1 text-gray-500">{new Date(entry.createdAt).toLocaleString()}</div>
+                          <div id={domId('editor-page-div-024', domIdSuffix(entry, entry))} key={entry.id} className="rounded border border-gray-700 bg-gray-900 p-2 text-[11px] text-gray-300">
+                            <div id={domId('editor-page-div-025', domIdSuffix(entry, entry))}>{entry.outcome}</div>
+                            <div id={domId('editor-page-div-026', domIdSuffix(entry, entry))} className="mt-1 text-gray-500">{new Date(entry.createdAt).toLocaleString()}</div>
                           </div>
                         ))}
                       </div>
@@ -1750,15 +1999,16 @@ export default function EditorPage() {
                   </>
                 )}
               </div>
-              </aside>
+                </aside>
+              </>
             )}
           </div>
         )}
       </div>
 
       {commandPaletteOpen && (
-        <div className="fixed inset-0 z-40 bg-black/60 flex items-start justify-center pt-24 px-4">
-          <div className="w-full max-w-2xl bg-gray-900 border border-gray-700 rounded-lg shadow-xl overflow-hidden">
+        <div id="editor-page-div-027" className="fixed inset-0 z-40 bg-black/60 flex items-start justify-center pt-24 px-4">
+          <div id="editor-page-div-028" className="w-full max-w-2xl bg-gray-900 border border-gray-700 rounded-lg shadow-xl overflow-hidden">
             <input
               ref={commandInputRef}
               value={commandQuery}
@@ -1766,7 +2016,7 @@ export default function EditorPage() {
               placeholder="Type a command... (try `open foo`)"
               className="w-full bg-gray-900 px-4 py-3 text-sm border-b border-gray-700 outline-none"
             />
-            <div className="max-h-80 overflow-y-auto p-2 space-y-1">
+            <div id="editor-page-div-029" className="max-h-80 overflow-y-auto p-2 space-y-1">
               {commandItems.length === 0 ? (
                 <p className="text-xs text-gray-500 px-2 py-3">No matching commands.</p>
               ) : (
@@ -1786,9 +2036,9 @@ export default function EditorPage() {
       )}
 
       {shortcutEditorOpen && (
-        <div className="fixed inset-0 z-40 bg-black/70 flex items-center justify-center p-4">
-          <div className="w-full max-w-xl bg-gray-900 border border-gray-700 rounded-lg p-4">
-            <div className="flex items-center justify-between mb-3">
+        <div id="editor-page-div-030" className="fixed inset-0 z-40 bg-black/70 flex items-center justify-center p-4">
+          <div id="editor-page-div-031" className="w-full max-w-xl bg-gray-900 border border-gray-700 rounded-lg p-4">
+            <div id="editor-page-div-032" className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold text-gray-100">Keyboard shortcuts</h3>
               <button
                 onClick={() => setShortcutEditorOpen(false)}
@@ -1797,9 +2047,9 @@ export default function EditorPage() {
                 Close
               </button>
             </div>
-            <div className="space-y-2">
+            <div id="editor-page-div-033" className="space-y-2">
               {Object.entries(SHORTCUT_LABELS).map(([key, label]) => (
-                <div key={key} className="flex items-center justify-between gap-3 bg-gray-800/60 rounded px-3 py-2">
+                <div id="editor-page-div-034" key={key} className="flex items-center justify-between gap-3 bg-gray-800/60 rounded px-3 py-2">
                   <span className="text-xs text-gray-200">{label}</span>
                   <button
                     onClick={() => setCapturingShortcutFor(key)}
@@ -1821,9 +2071,9 @@ export default function EditorPage() {
       )}
 
       {showRecoveryPanel && (
-        <div className="fixed inset-0 z-40 bg-black/55 flex items-center justify-center p-4">
-          <div className="w-full max-w-2xl bg-gray-900 border border-gray-700 rounded-lg shadow-xl">
-            <div className="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
+        <div id="editor-page-div-035" className="fixed inset-0 z-40 bg-black/55 flex items-center justify-center p-4">
+          <div id="editor-page-div-036" className="w-full max-w-2xl bg-gray-900 border border-gray-700 rounded-lg shadow-xl">
+            <div id="editor-page-div-037" className="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
               <h2 className="text-sm font-semibold text-gray-100">Restore unsaved drafts</h2>
               <button
                 className="text-xs text-gray-400 hover:text-gray-200"
@@ -1832,17 +2082,17 @@ export default function EditorPage() {
                 Close
               </button>
             </div>
-            <div className="p-4 space-y-2 max-h-[70vh] overflow-y-auto">
+            <div id="editor-page-div-038" className="p-4 space-y-2 max-h-[70vh] overflow-y-auto">
               {Object.keys(recoverableDrafts).length === 0 ? (
                 <p className="text-xs text-gray-400">No recoverable drafts found from previous sessions.</p>
               ) : (
                 Object.entries(recoverableDrafts).map(([filename, draft]) => (
-                  <div key={filename} className="border border-gray-700 rounded p-3 bg-gray-950">
+                  <div id="editor-page-div-039" key={filename} className="border border-gray-700 rounded p-3 bg-gray-950">
                     <p className="text-xs text-gray-200">{filename}</p>
                     <p className="text-[11px] text-gray-500 mt-1 line-clamp-2">
                       {draft.slice(0, 180) || 'Empty draft'}
                     </p>
-                    <div className="mt-3 flex gap-2">
+                    <div id="editor-page-div-040" className="mt-3 flex gap-2">
                       <button
                         className="text-xs px-2 py-1 rounded bg-blue-600 hover:bg-blue-500"
                         onClick={() => handleRestoreDraft(filename)}
@@ -1871,9 +2121,9 @@ export default function EditorPage() {
       )}
 
       {showStorageHealth && (
-        <div className="fixed inset-0 z-40 bg-black/55 flex items-center justify-center p-4">
-          <div className="w-full max-w-xl bg-gray-900 border border-gray-700 rounded-lg shadow-xl">
-            <div className="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
+        <div id="editor-page-div-041" className="fixed inset-0 z-40 bg-black/55 flex items-center justify-center p-4">
+          <div id="editor-page-div-042" className="w-full max-w-xl bg-gray-900 border border-gray-700 rounded-lg shadow-xl">
+            <div id="editor-page-div-043" className="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
               <h2 className="text-sm font-semibold text-gray-100">Storage health</h2>
               <button
                 className="text-xs text-gray-400 hover:text-gray-200"
@@ -1882,24 +2132,24 @@ export default function EditorPage() {
                 Close
               </button>
             </div>
-            <div className="p-4 grid grid-cols-2 gap-3 text-xs">
-              <div className="border border-gray-700 rounded p-3">
+            <div id="editor-page-div-044" className="p-4 grid grid-cols-2 gap-3 text-xs">
+              <div id="editor-page-div-045" className="border border-gray-700 rounded p-3">
                 <p className="text-gray-400">Blobs</p>
                 <p className="text-lg text-gray-100">{storageHealth.blobCount}</p>
               </div>
-              <div className="border border-gray-700 rounded p-3">
+              <div id="editor-page-div-046" className="border border-gray-700 rounded p-3">
                 <p className="text-gray-400">Notes</p>
                 <p className="text-lg text-gray-100">{storageHealth.notesCount}</p>
               </div>
-              <div className="border border-gray-700 rounded p-3">
+              <div id="editor-page-div-047" className="border border-gray-700 rounded p-3">
                 <p className="text-gray-400">Queued sync items</p>
                 <p className="text-lg text-gray-100">{storageHealth.queuedCount}</p>
               </div>
-              <div className="border border-gray-700 rounded p-3">
+              <div id="editor-page-div-048" className="border border-gray-700 rounded p-3">
                 <p className="text-gray-400">Stale revisions (&gt;24h)</p>
                 <p className="text-lg text-gray-100">{storageHealth.staleRevisions}</p>
               </div>
-              <div className="col-span-2 border border-gray-700 rounded p-3">
+              <div id="editor-page-div-049" className="col-span-2 border border-gray-700 rounded p-3">
                 <p className="text-gray-400">Approximate local storage bytes</p>
                 <p className="text-lg text-gray-100">{storageHealth.approximateBytes.toLocaleString()}</p>
               </div>

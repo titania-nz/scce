@@ -3,6 +3,7 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { diffLines, Change } from 'diff';
 import { DiffLine, DiffHunk, buildPreparedDiff } from '@/lib/diffUtils';
+import { domId, domIdSuffix } from '@/lib/domId';
 
 export type HunkMergeState = 'unresolved' | 'takeA' | 'takeB' | 'edited';
 
@@ -26,7 +27,7 @@ interface DiffViewProps {
   onMergeStateChange?: (state: { mergedContent: string; unresolvedCount: number }) => void;
 }
 
-function DiffLineRow({ line }: { line: DiffLine }) {
+function DiffLineRow({ line, hunkId, lineIndex }: { line: DiffLine; hunkId: number; lineIndex: number }) {
   const lineNumClass = 'w-10 shrink-0 text-right select-none text-gray-600 tabular-nums';
 
   let rowClass = 'flex min-w-0 font-mono text-xs leading-5';
@@ -44,7 +45,7 @@ function DiffLineRow({ line }: { line: DiffLine }) {
   }
 
   return (
-    <div className={rowClass}>
+    <div id={domId('diff-view-div-001', hunkId, lineIndex)} className={rowClass}>
       <span className={`${lineNumClass} pr-1`}>{line.lineNumA ?? ''}</span>
       <span className={`${lineNumClass} pr-2`}>{line.lineNumB ?? ''}</span>
       <span className={prefixClass}>{prefix}</span>
@@ -79,10 +80,11 @@ function HunkBlock({
   onActivate?: (hunkId: number) => void;
 }) {
   const isResolved = mergeState !== 'unresolved';
+  const hunkIdSuffix = domIdSuffix(hunk.id, hunk.id);
 
   return (
-    <div ref={hunkRef} className="min-w-0" onClick={() => onActivate?.(hunk.id)}>
-      <div
+    <div id={domId('diff-view-div-002', hunkIdSuffix)} ref={hunkRef} className="min-w-0" onClick={() => onActivate?.(hunk.id)}>
+      <div id={domId('diff-view-div-003', hunkIdSuffix)}
         className={`flex items-center px-3 py-0.5 text-xs font-mono text-gray-500 bg-gray-900 border-y border-gray-700 ${isActive ? 'border-l-2 border-l-blue-500' : ''}`}
       >
         <span>
@@ -93,7 +95,7 @@ function HunkBlock({
         >
           {isResolved ? 'Resolved' : 'Unresolved'}
         </span>
-        <div className="ml-auto flex items-center gap-1">
+        <div id={domId('diff-view-div-004', hunkIdSuffix)} className="ml-auto flex items-center gap-1">
           <button
             onClick={() => onTakeA?.(hunk.id)}
             className={`rounded px-2 py-0.5 text-[11px] transition-colors ${mergeState === 'takeA' ? 'bg-blue-700 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}
@@ -118,10 +120,10 @@ function HunkBlock({
         </div>
       </div>
       {hunk.lines.map((line, i) => (
-        <DiffLineRow key={i} line={line} />
+        <DiffLineRow key={i} line={line} hunkId={hunk.id} lineIndex={i} />
       ))}
       {mergeState === 'edited' && (
-        <div className="border-b border-gray-700 bg-gray-900 px-3 py-2">
+        <div id={domId('diff-view-div-005', hunkIdSuffix)} className="border-b border-gray-700 bg-gray-900 px-3 py-2">
           <label className="mb-1 block text-[11px] font-medium text-gray-400">Edited merged content for this hunk</label>
           <textarea
             className="h-24 w-full resize-y rounded border border-gray-700 bg-gray-950 px-2 py-1 font-mono text-xs text-gray-200 focus:border-blue-500 focus:outline-none"
@@ -308,8 +310,8 @@ export default function DiffView({
   ]);
 
   return (
-    <div className="flex-1 min-w-0 flex flex-col overflow-hidden bg-gray-950">
-      <div className="shrink-0 flex min-w-0 items-center gap-3 px-3 h-10 bg-gray-900 border-b border-gray-700 text-xs sticky top-0 z-10">
+    <div id="diff-view-div-006" className="flex-1 min-w-0 flex flex-col overflow-hidden bg-gray-950">
+      <div id="diff-view-div-007" className="shrink-0 flex min-w-0 items-center gap-3 px-3 h-10 bg-gray-900 border-b border-gray-700 text-xs sticky top-0 z-10">
         <span className="text-green-400 font-mono">+{totalAdditions}</span>
         <span className="text-red-400 font-mono">-{totalRemovals}</span>
 
@@ -320,7 +322,7 @@ export default function DiffView({
         </span>
 
         {!isIdentical && hunks.length > 0 && (
-          <div className="flex items-center gap-1 shrink-0">
+          <div id="diff-view-div-008" className="flex items-center gap-1 shrink-0">
             <button
               onClick={() => navigateTo(Math.max(0, activeIdx - 1))}
               disabled={activeIdx === 0}
@@ -355,9 +357,9 @@ export default function DiffView({
         )}
       </div>
 
-      <div className="min-w-0 flex-1 overflow-y-auto">
+      <div id="diff-view-div-009" className="min-w-0 flex-1 overflow-y-auto">
         {isIdentical ? (
-          <div className="flex-1 flex items-center justify-center h-full text-gray-400 text-sm">Files are identical</div>
+          <div id="diff-view-div-010" className="flex-1 flex items-center justify-center h-full text-gray-400 text-sm">Files are identical</div>
         ) : (
           hunks.map((hunk) => (
             <HunkBlock
